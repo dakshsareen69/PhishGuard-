@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhishGuard AI — Phishing Detection</title>
+    <meta name="description"
+        content="PhishGuard AI — Privacy-first phishing detection. Scan URLs, emails, SMS and screenshots for phishing threats using multi-layer AI analysis.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Fira+Code:wght@300;400;500;600&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        :root {
+            --bg-deep: #06000f;
+            --bg-card: rgba(25, 10, 50, .55);
+            --bg-card-solid: #140a2e;
+            --bg-input: #0f0520;
+            --accent: #a855f7;
+            --accent2: #ec4899;
+            --accent3: #7c3aed;
+            --accent-dim: rgba(168, 85, 247, .12);
+            --accent-glow: rgba(168, 85, 247, .3);
+            --pink-dim: rgba(236, 72, 153, .1);
+            --green: #34d399;
+            --yellow: #fbbf24;
+            --red: #f43f5e;
+            --text-primary: #f1e8ff;
+            --text-secondary: #a78bdb;
+            --text-muted: #5a3d8a;
+            --border: rgba(168, 85, 247, .18);
+            --border-strong: rgba(168, 85, 247, .35);
+            --glass: rgba(25, 10, 50, .45);
+            --glass-border: rgba(168, 85, 247, .12);
+            --font-heading: 'Space Grotesk', system-ui, sans-serif;
+            --font-code: 'Fira Code', 'JetBrains Mono', monospace;
+            --radius: 16px;
+            --radius-sm: 10px;
+            --radius-xs: 6px;
+        }
+
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth
+        }
+
+        body {
+            font-family: var(--font-heading);
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none
+        }
+
+        /* ===== ANIMATED BACKGROUND ===== */
+        .bg-canvas {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: .35;
+            animation: float 20s ease-in-out infinite;
+        }
+
+        .orb-1 {
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, #a855f7, transparent 70%);
+            top: -100px;
+            left: -150px;
+            animation-duration: 18s
+        }
+
+        .orb-2 {
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, #ec4899, transparent 70%);
+            bottom: -80px;
+            right: -100px;
+            animation-duration: 22s;
+            animation-delay: -5s
+        }
+
+        .orb-3 {
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, #7c3aed, transparent 70%);
+            top: 40%;
+            left: 60%;
+            animation-duration: 25s;
+            animation-delay: -10s
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translate(0, 0) scale(1)
+            }
+
+            25% {
+                transform: translate(40px, -30px) scale(1.1)
+            }
+
+            50% {
+                transform: translate(-20px, 50px) scale(.95)
+            }
+
+            75% {
+                transform: translate(30px, 20px) scale(1.05)
+            }
+        }
+
+        .bg-noise {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            opacity: .03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+
+        /* ===== LAYOUT ===== */
+        .app-wrap {
+            position: relative;
+            z-index: 1;
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem 3rem;
+            width: 100%
+        }
+
+        /* ===== HEADER ===== */
+        .brand {
+            text-align: center;
+            margin-bottom: 3rem
+        }
+
+        .brand-logo {
+            display: inline-flex;
+            align-items: center;
+            gap: .7rem;
+            margin-bottom: 1rem;
+        }
+
+        .brand-logo .logo-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.6rem;
+            box-shadow: 0 0 30px rgba(168, 85, 247, .4);
+        }
+
+        .brand h1 {
+            font-size: 2.6rem;
+            font-weight: 700;
+            letter-spacing: -.03em;
+            background: linear-gradient(135deg, #a855f7, #ec4899, #7c3aed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            background-size: 200% 200%;
+            animation: gradient-shift 6s ease infinite;
+        }
+
+        @keyframes gradient-shift {
+            0% {
+                background-position: 0% 50%
+            }
+
+            50% {
+                background-position: 100% 50%
+            }
+
+            100% {
+                background-position: 0% 50%
+            }
+        }
+
+        .brand-sub {
+            color: var(--text-secondary);
+            font-size: .95rem;
+            margin-top: .6rem;
+            font-weight: 400;
+            letter-spacing: .01em;
+        }
+
+        .brand-sub .typing-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: var(--accent);
+            margin-left: 3px;
+            animation: blink 1s step-end infinite;
+            vertical-align: text-bottom;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0
+            }
+        }
+
+        /* ===== TABS ===== */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 1.8rem;
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 5px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: .85rem .5rem;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-heading);
+            font-size: .85rem;
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: all .3s;
+            font-weight: 500;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: rgba(168, 85, 247, .06)
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(135deg, rgba(168, 85, 247, .18), rgba(236, 72, 153, .1));
+            color: #e0c0ff;
+            box-shadow: 0 0 25px rgba(168, 85, 247, .12);
+            border: 1px solid var(--border);
+        }
+
+        /* ===== INPUT PANELS ===== */
+        .tab-panel {
+            display: none
+        }
+
+        .tab-panel.active {
+            display: block;
+            animation: fadeIn .4s ease
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        .glass-card {
+            background: var(--glass);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 1.8rem;
+            transition: border-color .4s, box-shadow .4s;
+        }
+
+        .glass-card:focus-within {
+            border-color: var(--border-strong);
+            box-shadow: 0 0 40px rgba(168, 85, 247, .08);
+        }
+
+        .glass-card label {
+            display: block;
+            font-size: .75rem;
+            color: var(--text-secondary);
+            margin-bottom: .7rem;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            font-weight: 500;
+        }
+
+        .glass-card input[type="text"],
+        .glass-card textarea {
+            width: 100%;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: .9rem 1.1rem;
+            color: var(--text-primary);
+            font-family: var(--font-code);
+            font-size: .88rem;
+            outline: none;
+            transition: all .3s;
+            resize: vertical;
+        }
+
+        .glass-card input[type="text"]:focus,
+        .glass-card textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim), 0 0 20px rgba(168, 85, 247, .1);
+        }
+
+        .glass-card textarea {
+            min-height: 140px
+        }
+
+        /* Upload zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 3rem 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all .4s;
+            position: relative;
+            background: rgba(168, 85, 247, .02);
+        }
+
+        .upload-zone:hover,
+        .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(168, 85, 247, .06);
+            box-shadow: 0 0 30px rgba(168, 85, 247, .08);
+        }
+
+        .upload-zone .upload-icon {
+            font-size: 2.8rem;
+            margin-bottom: .8rem
+        }
+
+        .upload-zone p {
+            color: var(--text-secondary);
+            font-size: .88rem
+        }
+
+        .upload-zone .format-hint {
+            font-size: .72rem;
+            color: var(--text-muted);
+            margin-top: .5rem
+        }
+
+        .upload-zone input[type="file"] {
+            display: none
+        }
+
+        /* File preview */
+        .file-preview {
+            display: none;
+            align-items: center;
+            gap: 1rem;
+            margin-top: 1.2rem;
+            background: var(--bg-input);
+            border-radius: var(--radius-sm);
+            padding: .9rem 1.1rem;
+            border: 1px solid var(--border);
+        }
+
+        .file-preview.visible {
+            display: flex
+        }
+
+        .file-preview img {
+            width: 56px;
+            height: 56px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 1px solid var(--border)
+        }
+
+        .file-preview .file-info {
+            flex: 1
+        }
+
+        .file-preview .file-name {
+            font-size: .82rem;
+            color: var(--text-primary);
+            word-break: break-all;
+            font-family: var(--font-code)
+        }
+
+        .file-preview .file-size {
+            font-size: .72rem;
+            color: var(--text-muted);
+            margin-top: 2px
+        }
+
+        .file-preview .remove-file {
+            background: none;
+            border: none;
+            color: var(--red);
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: .4rem;
+            border-radius: 6px;
+            transition: all .2s;
+        }
+
+        .file-preview .remove-file:hover {
+            background: rgba(244, 63, 94, .1)
+        }
+
+        /* ===== SCAN BUTTON ===== */
+        .scan-btn {
+            width: 100%;
+            margin-top: 1.4rem;
+            padding: 1rem;
+            border: none;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #fff;
+            font-family: var(--font-heading);
+            font-size: .95rem;
+            font-weight: 600;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all .35s;
+            letter-spacing: .02em;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(168, 85, 247, .3);
+        }
+
+        .scan-btn:hover:not(:disabled) {
+            box-shadow: 0 6px 35px rgba(168, 85, 247, .45);
+            transform: translateY(-2px);
+        }
+
+        .scan-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 15px rgba(168, 85, 247, .3)
+        }
+
+        .scan-btn:disabled {
+            opacity: .5;
+            cursor: not-allowed
+        }
+
+        .scan-btn .ripple {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .15), transparent);
+            transform: translateX(-100%);
+        }
+
+        .scan-btn.loading .ripple {
+            animation: sweep 1.5s ease infinite
+        }
+
+        @keyframes sweep {
+            to {
+                transform: translateX(100%)
+            }
+        }
+
+        /* ===== SCANNING STATE ===== */
+        .scanner {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 3.5rem 1rem;
+            text-align: center;
+        }
+
+        .scanner.active {
+            display: flex;
+            animation: fadeIn .4s ease
+        }
+
+        .scan-spinner {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 3px solid rgba(168, 85, 247, .15);
+            border-top-color: var(--accent);
+            border-right-color: var(--accent2);
+            animation: spin 1s linear infinite;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 0 30px var(--accent-dim);
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg)
+            }
+        }
+
+        .scanner p {
+            color: var(--text-secondary);
+            font-size: .9rem
+        }
+
+        .scanner .scan-dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite
+        }
+
+        @keyframes dots {
+            0% {
+                content: ''
+            }
+
+            25% {
+                content: '.'
+            }
+
+            50% {
+                content: '..'
+            }
+
+            75% {
+                content: '...'
+            }
+        }
+
+        /* ===== RESULT CARD ===== */
+        .result-card {
+            display: none;
+            background: var(--glass);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius);
+            padding: 2.2rem;
+            margin-top: 1.8rem;
+            animation: slideUp .6s cubic-bezier(.4, 0, .2, 1);
+        }
+
+        .result-card.visible {
+            display: block
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        /* Score section */
+        .score-section {
+            display: flex;
+            align-items: center;
+            gap: 2.5rem;
+            margin-bottom: 2.2rem;
+            flex-wrap: wrap;
+            justify-content: center
+        }
+
+        .gauge-wrapper {
+            position: relative;
+            width: 160px;
+            height: 160px;
+            flex-shrink: 0
+        }
+
+        .gauge-ring {
+            transform: rotate(-90deg)
+        }
+
+        .gauge-ring .ring-track {
+            fill: none;
+            stroke: rgba(168, 85, 247, .1);
+            stroke-width: 10
+        }
+
+        .gauge-ring .ring-bar {
+            fill: none;
+            stroke-width: 10;
+            stroke-linecap: round;
+            transition: stroke .6s;
+            filter: drop-shadow(0 0 8px var(--accent-glow));
+        }
+
+        .gauge-label {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .gauge-score {
+            font-size: 2.8rem;
+            font-weight: 700;
+            line-height: 1;
+            font-family: var(--font-code)
+        }
+
+        .gauge-pct {
+            font-size: .72rem;
+            color: var(--text-muted);
+            margin-top: 3px;
+            letter-spacing: .05em
+        }
+
+        .score-meta {
+            text-align: left
+        }
+
+        .verdict-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: .6rem;
+            letter-spacing: -.01em;
+        }
+
+        .verdict-desc {
+            font-size: .85rem;
+            color: var(--text-secondary);
+            max-width: 340px;
+            line-height: 1.6
+        }
+
+        .rank-safe {
+            color: var(--green)
+        }
+
+        .rank-suspicious {
+            color: var(--yellow)
+        }
+
+        .rank-scam {
+            color: var(--red)
+        }
+
+        /* ===== LAYER BREAKDOWN ===== */
+        .layers-wrap {
+            margin-top: .5rem
+        }
+
+        .layers-heading {
+            font-size: .72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            margin-bottom: 1.2rem;
+            padding-bottom: .6rem;
+            border-bottom: 1px solid var(--border);
+            font-weight: 500;
+        }
+
+        .layer-card {
+            margin-bottom: .7rem;
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            border: 1px solid var(--border);
+            transition: border-color .3s;
+        }
+
+        .layer-card.triggered {
+            border-left: 3px solid var(--red)
+        }
+
+        .layer-card.safe {
+            border-left: 3px solid var(--green)
+        }
+
+        .layer-header {
+            display: flex;
+            align-items: center;
+            gap: .7rem;
+            padding: .9rem 1rem;
+            background: rgba(15, 5, 30, .4);
+            cursor: pointer;
+            transition: background .2s;
+            user-select: none;
+        }
+
+        .layer-header:hover {
+            background: rgba(168, 85, 247, .06)
+        }
+
+        .layer-icon {
+            font-size: 1.05rem;
+            flex-shrink: 0
+        }
+
+        .layer-title {
+            flex: 1;
+            font-size: .82rem;
+            font-weight: 600
+        }
+
+        .layer-arrow {
+            font-size: .7rem;
+            color: var(--text-muted);
+            transition: transform .3s;
+        }
+
+        .layer-card.open .layer-arrow {
+            transform: rotate(180deg)
+        }
+
+        .layer-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height .35s ease;
+            background: rgba(10, 3, 20, .3);
+        }
+
+        .layer-card.open .layer-body {
+            max-height: 500px
+        }
+
+        .layer-detail-inner {
+            padding: .8rem 1rem .9rem 2.6rem
+        }
+
+        .layer-desc {
+            font-size: .78rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: .4rem
+        }
+
+        .layer-signals {
+            padding-left: 1rem
+        }
+
+        .layer-signals li {
+            font-size: .74rem;
+            color: var(--text-muted);
+            margin-bottom: .25rem;
+            list-style: disc;
+            line-height: 1.4
+        }
+
+        /* ===== NEW SCAN BTN ===== */
+        .new-scan-btn {
+            width: 100%;
+            margin-top: 1.8rem;
+            padding: .8rem;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-heading);
+            font-size: .82rem;
+            font-weight: 500;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all .3s;
+        }
+
+        .new-scan-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            box-shadow: 0 0 20px rgba(168, 85, 247, .1)
+        }
+
+        /* ===== SCAN HISTORY ===== */
+        .history-section {
+            margin-top: 2rem
+        }
+
+        .history-heading {
+            font-size: .72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            margin-bottom: .8rem;
+            font-weight: 500;
+        }
+
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: .5rem
+        }
+
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: .8rem;
+            padding: .7rem 1rem;
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-sm);
+            font-size: .78rem;
+            cursor: pointer;
+            transition: all .3s;
+        }
+
+        .history-item:hover {
+            border-color: var(--border-strong);
+            background: rgba(168, 85, 247, .06)
+        }
+
+        .history-emoji {
+            font-size: 1rem
+        }
+
+        .history-text {
+            flex: 1;
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: var(--font-code);
+            font-size: .72rem
+        }
+
+        .history-score {
+            font-weight: 600;
+            font-family: var(--font-code);
+            font-size: .78rem
+        }
+
+        .history-rank {
+            font-size: .68rem;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-weight: 500
+        }
+
+        .history-rank.safe {
+            background: rgba(52, 211, 153, .12);
+            color: var(--green)
+        }
+
+        .history-rank.suspicious {
+            background: rgba(251, 191, 36, .12);
+            color: var(--yellow)
+        }
+
+        .history-rank.scam {
+            background: rgba(244, 63, 94, .12);
+            color: var(--red)
+        }
+
+        /* ===== ERROR ===== */
+        .error-msg {
+            display: none;
+            background: rgba(244, 63, 94, .08);
+            border: 1px solid rgba(244, 63, 94, .2);
+            border-radius: var(--radius-sm);
+            padding: 1rem 1.2rem;
+            margin-top: 1.2rem;
+            color: var(--red);
+            font-size: .85rem;
+            line-height: 1.5;
+            animation: fadeIn .3s ease;
+        }
+
+        .error-msg.visible {
+            display: block
+        }
+
+        /* ===== FOOTER ===== */
+        .app-footer {
+            text-align: center;
+            padding: 2rem 1rem;
+            margin-top: 3rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .privacy-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: .35rem 1rem;
+            margin-bottom: .6rem;
+            font-size: .72rem;
+            color: var(--text-secondary);
+            backdrop-filter: blur(12px);
+        }
+
+        .app-footer p {
+            font-size: .7rem;
+            color: var(--text-muted)
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media(max-width:640px) {
+            .brand h1 {
+                font-size: 1.9rem
+            }
+
+            .tab-btn {
+                font-size: .75rem;
+                padding: .7rem .3rem
+            }
+
+            .score-section {
+                flex-direction: column;
+                text-align: center
+            }
+
+            .score-meta {
+                text-align: center
+            }
+
+            .app-wrap {
+                padding: 1.5rem 1rem 2rem
+            }
+
+            .glass-card {
+                padding: 1.3rem
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="bg-canvas">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+    <div class="bg-noise"></div>
+
+    <div class="app-wrap">
+        <!-- HEADER -->
+        <header class="brand">
+            <div class="brand-logo">
+                <div class="logo-icon">🛡️</div>
+            </div>
+            <h1>PhishGuard AI</h1>
+            <p class="brand-sub">Multi-layer phishing detection engine<span class="typing-cursor"></span></p>
+        </header>
+
+        <!-- TABS -->
+        <div class="tabs" role="tablist">
+            <button class="tab-btn active" data-tab="url" role="tab" aria-selected="true">🔗 URL Scan</button>
+            <button class="tab-btn" data-tab="text" role="tab" aria-selected="false">📝 Text / Email</button>
+            <button class="tab-btn" data-tab="file" role="tab" aria-selected="false">📎 Screenshot</button>
+        </div>
+
+        <!-- URL TAB -->
+        <div class="tab-panel active" id="panel-url">
+            <div class="glass-card">
+                <label for="url-input">Paste a suspicious URL</label>
+                <input type="text" id="url-input" placeholder="https://example.com/suspicious-link" autocomplete="off"
+                    spellcheck="false">
+                <button class="scan-btn" id="btn-url" onclick="analyzeURL()">
+                    <span class="ripple"></span>
+                    ⚡ Scan URL
+                </button>
+            </div>
+        </div>
+
+        <!-- TEXT TAB -->
+        <div class="tab-panel" id="panel-text">
+            <div class="glass-card">
+                <label for="text-input">Paste an email, SMS, or message</label>
+                <textarea id="text-input" placeholder="Paste the full message content here..."></textarea>
+                <button class="scan-btn" id="btn-text" onclick="analyzeText()">
+                    <span class="ripple"></span>
+                    ⚡ Scan Text
+                </button>
+            </div>
+        </div>
+
+        <!-- FILE TAB -->
+        <div class="tab-panel" id="panel-file">
+            <div class="glass-card">
+                <label>Upload a screenshot</label>
+                <div class="upload-zone" id="upload-zone">
+                    <div class="upload-icon">📷</div>
+                    <p>Drag & drop or <strong>click to upload</strong></p>
+                    <div class="format-hint">PNG, JPG, JPEG — up to 10 MB</div>
+                    <input type="file" id="file-input" accept="image/png,image/jpeg,image/jpg">
+                </div>
+                <div class="file-preview" id="file-preview">
+                    <img id="file-thumb" src="" alt="preview">
+                    <div class="file-info">
+                        <div class="file-name" id="file-name"></div>
+                        <div class="file-size" id="file-size"></div>
+                    </div>
+                    <button class="remove-file" onclick="removeFile()" title="Remove file">✕</button>
+                </div>
+                <button class="scan-btn" id="btn-file" onclick="analyzeFile()">
+                    <span class="ripple"></span>
+                    ⚡ Scan Screenshot
+                </button>
+            </div>
+        </div>
+
+        <!-- ERROR -->
+        <div class="error-msg" id="error-msg"></div>
+
+        <!-- SCANNER -->
+        <div class="scanner" id="scanner">
+            <div class="scan-spinner"></div>
+            <p>Analyzing across threat databases<span class="scan-dots"></span></p>
+        </div>
+
+        <!-- RESULT CARD -->
+        <div class="result-card" id="result-card">
+            <div class="score-section">
+                <div class="gauge-wrapper">
+                    <svg class="gauge-ring" viewBox="0 0 160 160" width="160" height="160">
+                        <circle class="ring-track" cx="80" cy="80" r="66" />
+                        <circle class="ring-bar" id="ring-bar" cx="80" cy="80" r="66" stroke-dasharray="414.69"
+                            stroke-dashoffset="414.69" />
+                    </svg>
+                    <div class="gauge-label">
+                        <span class="gauge-score" id="gauge-score">0</span>
+                        <span class="gauge-pct">/ 100</span>
+                    </div>
+                </div>
+                <div class="score-meta">
+                    <div class="verdict-badge" id="verdict-badge"></div>
+                    <p class="verdict-desc" id="verdict-desc"></p>
+                </div>
+            </div>
+            <div class="layers-wrap">
+                <div class="layers-heading">Detection Layer Breakdown</div>
+                <div id="layers-container"></div>
+            </div>
+            <button class="new-scan-btn" onclick="resetScan()">🔄 New Scan</button>
+        </div>
+
+        <!-- SCAN HISTORY -->
+        <div class="history-section" id="history-section" style="display:none">
+            <div class="history-heading">Recent Scans</div>
+            <div class="history-list" id="history-list"></div>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+        <div class="privacy-pill">🔒 Zero data stored</div>
+        <p>PhishGuard AI — Privacy-first phishing detection. No data stored, ever.</p>
+    </footer>
+
+    <script>
+        const API_URL = window.location.origin || 'http://localhost:5000';
+        const scanHistory = [];
+
+        // ---- Tab Switching ----
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
+                document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+                hideError(); hideResult();
+            });
+        });
+
+        // ---- File Upload ----
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        let selectedFileBase64 = null;
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+        uploadZone.addEventListener('drop', e => {
+            e.preventDefault(); uploadZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+        function handleFile(file) {
+            const allowed = ['image/png', 'image/jpeg', 'image/jpg'];
+            if (!allowed.includes(file.type)) { showError('Please upload a PNG or JPG image.'); return; }
+            if (file.size > 10 * 1024 * 1024) { showError('File too large. Maximum 10 MB.'); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                selectedFileBase64 = reader.result;
+                document.getElementById('file-thumb').src = reader.result;
+                document.getElementById('file-name').textContent = esc(file.name);
+                document.getElementById('file-size').textContent = fmtSize(file.size);
+                document.getElementById('file-preview').classList.add('visible');
+                uploadZone.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+        function removeFile() {
+            selectedFileBase64 = null; fileInput.value = '';
+            document.getElementById('file-preview').classList.remove('visible');
+            uploadZone.style.display = '';
+        }
+        function fmtSize(b) {
+            if (b < 1024) return b + ' B';
+            if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+            return (b / 1048576).toFixed(1) + ' MB';
+        }
+
+        // ---- Analysis ----
+        function analyzeURL() {
+            const url = document.getElementById('url-input').value.trim();
+            if (!url) { showError('Enter a URL to scan.'); return; }
+            sendAnalysis({ type: 'url', content: url }, document.getElementById('btn-url'));
+        }
+        function analyzeText() {
+            const text = document.getElementById('text-input').value.trim();
+            if (!text) { showError('Paste some text to analyze.'); return; }
+            sendAnalysis({ type: 'text', content: text }, document.getElementById('btn-text'));
+        }
+        function analyzeFile() {
+            if (!selectedFileBase64) { showError('Upload an image first.'); return; }
+            sendAnalysis({ type: 'image_base64', content: selectedFileBase64 }, document.getElementById('btn-file'));
+        }
+
+        async function sendAnalysis(payload, btn) {
+            hideError(); hideResult();
+            btn.disabled = true; btn.classList.add('loading');
+            document.getElementById('scanner').classList.add('active');
+            try {
+                const resp = await fetch(API_URL + '/analyze', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.error) { showError(data.error); }
+                else {
+                    showResult(data);
+                    addHistory(payload, data);
+                }
+            } catch (err) {
+                showError('Cannot reach PhishGuard backend. Ensure Flask is running on port 5000.');
+            } finally {
+                btn.disabled = false; btn.classList.remove('loading');
+                document.getElementById('scanner').classList.remove('active');
+            }
+        }
+
+        // ---- Result Rendering ----
+        function showResult(data) {
+            const card = document.getElementById('result-card');
+            card.classList.add('visible');
+            const score = data.risk_score;
+            const rank = data.rank;
+            let color, rankClass, desc;
+            if (rank === 'Safe') {
+                color = 'var(--green)'; rankClass = 'rank-safe';
+                desc = 'This content appears safe. No significant phishing indicators were detected across our analysis layers.';
+            } else if (rank === 'Suspicious') {
+                color = 'var(--yellow)'; rankClass = 'rank-suspicious';
+                desc = 'Some phishing indicators detected. Exercise caution — verify the source before clicking links or sharing information.';
+            } else {
+                color = 'var(--red)'; rankClass = 'rank-scam';
+                desc = 'Multiple strong phishing indicators found. This is highly likely a scam. Do not click links or share any personal data.';
+            }
+
+            // Animated gauge ring
+            const ring = document.getElementById('ring-bar');
+            const circ = 2 * Math.PI * 66;
+            ring.style.stroke = color;
+            ring.style.transition = 'none';
+            ring.style.strokeDashoffset = circ;
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    ring.style.transition = 'stroke-dashoffset 1.8s cubic-bezier(.4,0,.1,1)';
+                    ring.style.strokeDashoffset = circ - (score / 100) * circ;
+                });
+            });
+
+            animateCounter(document.getElementById('gauge-score'), 0, score, 1400);
+
+            const badge = document.getElementById('verdict-badge');
+            badge.className = 'verdict-badge ' + rankClass;
+            badge.textContent = data.emoji + ' ' + rank;
+            document.getElementById('verdict-desc').textContent = desc;
+
+            renderLayers(data.layers);
+            setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 120);
+        }
+
+        function animateCounter(el, from, to, dur) {
+            const start = performance.now();
+            const step = (now) => {
+                const t = Math.min((now - start) / dur, 1);
+                const ease = 1 - Math.pow(1 - t, 3);
+                el.textContent = Math.round(from + (to - from) * ease);
+                if (t < 1) requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        }
+
+        function renderLayers(layers) {
+            const c = document.getElementById('layers-container');
+            c.innerHTML = '';
+
+            const ti = layers.threat_intel;
+            c.appendChild(mkLayer('🛰️', 'Threat Intelligence',
+                ti.triggered ? `Found in ${ti.source}: ${esc(ti.detail)}` : 'Not found in any threat intelligence database',
+                ti.triggered,
+                ti.sources_checked ? ti.sources_checked.map(s => 'Checked: ' + s) : []
+            ));
+
+            const da = layers.domain_analysis;
+            c.appendChild(mkLayer('🌐', 'Domain & URL Analysis',
+                da.triggered ? `${da.signals.length} risk signal${da.signals.length > 1 ? 's' : ''} detected` : 'No suspicious domain characteristics found',
+                da.triggered,
+                (da.signals || []).map(s => esc(s))
+            ));
+
+            const bh = layers.behavioral;
+            c.appendChild(mkLayer('🧠', 'Behavioral / NLP Analysis',
+                bh.triggered ? `Phishing patterns detected (score: ${bh.score})` : 'No suspicious language patterns found',
+                bh.triggered,
+                (bh.signals || []).map(s => esc(s))
+            ));
+
+            const cl = layers.classification;
+            c.appendChild(mkLayer(
+                cl === 'Safe' ? '🛡️' : cl === 'Suspicious' ? '⚠️' : '🚨',
+                'Final Classification', `Verdict: ${cl}`, cl !== 'Safe', []
+            ));
+        }
+
+        function mkLayer(icon, name, detail, triggered, signals) {
+            const div = document.createElement('div');
+            div.className = 'layer-card ' + (triggered ? 'triggered' : 'safe');
+            const hasSignals = signals && signals.length > 0;
+
+            let html = `<div class="layer-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="layer-icon">${icon}</span>
+    <span class="layer-title">${esc(name)}</span>
+    ${hasSignals ? '<span class="layer-arrow">▼</span>' : ''}
+  </div>
+  <div class="layer-body"><div class="layer-detail-inner">
+    <div class="layer-desc">${detail}</div>`;
+            if (hasSignals) {
+                html += '<ul class="layer-signals">';
+                signals.forEach(s => { html += `<li>${s}</li>`; });
+                html += '</ul>';
+            }
+            html += '</div></div>';
+            div.innerHTML = html;
+            // Auto-open triggered layers
+            if (triggered && hasSignals) div.classList.add('open');
+            return div;
+        }
+
+        // ---- Scan History ----
+        function addHistory(payload, data) {
+            const preview = payload.type === 'image_base64' ? '📷 Screenshot' :
+                (payload.content.length > 50 ? payload.content.substring(0, 50) + '…' : payload.content);
+            scanHistory.unshift({ preview, score: data.risk_score, rank: data.rank, emoji: data.emoji, data });
+            if (scanHistory.length > 5) scanHistory.pop();
+            renderHistory();
+        }
+        function renderHistory() {
+            const section = document.getElementById('history-section');
+            const list = document.getElementById('history-list');
+            if (scanHistory.length === 0) { section.style.display = 'none'; return; }
+            section.style.display = 'block';
+            list.innerHTML = '';
+            scanHistory.forEach((h, i) => {
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                const rankClass = h.rank === 'Safe' ? 'safe' : h.rank === 'Suspicious' ? 'suspicious' : 'scam';
+                item.innerHTML = `
+      <span class="history-emoji">${h.emoji}</span>
+      <span class="history-text">${esc(h.preview)}</span>
+      <span class="history-score">${h.score}</span>
+      <span class="history-rank ${rankClass}">${h.rank}</span>`;
+                item.addEventListener('click', () => showResult(h.data));
+                list.appendChild(item);
+            });
+        }
+
+        // ---- Utilities ----
+        function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+        function showError(msg) { const el = document.getElementById('error-msg'); el.textContent = msg; el.classList.add('visible'); }
+        function hideError() { document.getElementById('error-msg').classList.remove('visible'); }
+        function hideResult() { document.getElementById('result-card').classList.remove('visible'); }
+        function resetScan() {
+            hideResult(); hideError();
+            document.getElementById('url-input').value = '';
+            document.getElementById('text-input').value = '';
+            removeFile();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    </script>
+</body>
+
+</html>
+
