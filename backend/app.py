@@ -1,15 +1,16 @@
 """
 PhishGuard AI — Flask Backend
 Multi-layer phishing detection API.
-No data stored. All analysis is in-memory and discarded after each response.
+No personal data is stored. Anonymous feedback signals may be used to improve detection accuracy.
 """
 from __future__ import annotations
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 import re
 import io
+import os
 import sys
+import json
 import base64
+import hashlib
 import logging
 import threading
 import time
@@ -33,8 +34,9 @@ except ImportError:
 try:
     from PIL import Image
     import pytesseract
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     OCR_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception):
     OCR_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,351 @@ app.static_folder = "."
 app.static_url_path = ""
 
 # ---------------------------------------------------------------------------
+# LEARNING MEMORY — persistent store for feedback corrections
+# ---------------------------------------------------------------------------
+MEMORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned_memory.json")
+_memory_lock = threading.Lock()
+
+# In-memory cache of learned data
+_learned_memory = {
+    "known_scam_urls": {},      # url -> {reason, reported_at, original_rank}
+    "known_safe_urls": {},      # url -> {reason, reported_at, original_rank}
+    "known_scam_patterns": {},  # text_hash -> {preview, reason, reported_at}
+    "known_safe_patterns": {},  # text_hash -> {preview, reason, reported_at}
+    "learned_signatures": [],   # list of extracted scam signature dicts
+    "stats": {"total_feedback": 0, "corrections": 0}
+}
+
+def _load_memory():
+    """Load learned memory from disk."""
+    global _learned_memory
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+                _learned_memory = json.load(f)
+            logger.info(f"🧠 Loaded learning memory: "
+                        f"{len(_learned_memory.get('known_scam_urls', {}))} scam URLs, "
+                        f"{len(_learned_memory.get('known_safe_urls', {}))} safe URLs, "
+                        f"{len(_learned_memory.get('known_scam_patterns', {}))} scam patterns, "
+                        f"{len(_learned_memory.get('known_safe_patterns', {}))} safe patterns")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load memory file: {e}")
+    else:
+        logger.info("🧠 No existing memory file — starting fresh")
+
+def _save_memory():
+    """Persist learned memory to disk."""
+    try:
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(_learned_memory, f, indent=2, ensure_ascii=False)
+        logger.info("💾 Learning memory saved to disk")
+    except Exception as e:
+        logger.error(f"❌ Failed to save memory: {e}")
+
+def _text_fingerprint(text: str) -> str:
+    """Create a normalized fingerprint hash of text content."""
+    normalized = re.sub(r'\s+', ' ', text.lower().strip())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:16]
+
+def _extract_urls_from_text(text: str) -> list[str]:
+    """Extract all URLs from text."""
+    return re.findall(r'https?://[^\s<>"\')]+', text)
+
+def _extract_scam_signatures(content: str, content_type: str) -> dict:
+    """
+    Analyze content to extract unique identifying scam signatures.
+    Extracts: domains, suspicious keywords, TLDs, phone numbers, brand names,
+    and behavioral pattern matches that make this content a scam.
+    """
+    signatures = {
+        "domains": [],
+        "domain_keywords": [],
+        "tlds": [],
+        "phishing_keywords": [],
+        "phone_numbers": [],
+        "brand_targets": [],
+        "url_patterns": [],
+        "behavioral_flags": []
+    }
+
+    content_lower = content.lower()
+
+    # Extract domains from URLs
+    urls = [content.strip()] if content_type == "url" else _extract_urls_from_text(content)
+    for url in urls:
+        try:
+            extracted = tldextract.extract(url)
+            if extracted.domain:
+                reg_domain = f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
+                signatures["domains"].append(reg_domain.lower())
+                if extracted.suffix:
+                    signatures["tlds"].append(extracted.suffix.lower())
+                # Extract keywords from domain parts
+                parts = re.split(r'[-_.]', extracted.domain.lower())
+                for part in parts:
+                    if part in PHISHING_DOMAIN_KEYWORDS:
+                        signatures["domain_keywords"].append(part)
+            # Extract path keywords
+            parsed = urlparse(url)
+            path_parts = re.split(r'[/\-_?&=.]', parsed.path.lower())
+            for part in path_parts:
+                if part in PHISHING_DOMAIN_KEYWORDS:
+                    signatures["phishing_keywords"].append(part)
+        except Exception:
+            pass
+
+    # Extract brand impersonation targets
+    _brand_targets = [
+        "paypal", "apple", "google", "microsoft", "amazon", "netflix",
+        "facebook", "instagram", "whatsapp", "paytm", "phonepe", "gpay",
+        "sbi", "hdfc", "icici", "axis", "wells fargo", "chase", "citi",
+        "bank of america", "usps", "fedex", "dhl", "ups"
+    ]
+    for brand in _brand_targets:
+        if brand in content_lower:
+            signatures["brand_targets"].append(brand)
+
+    # Extract phone numbers
+    phones = re.findall(r'\+?\d[\d\s\-]{8,15}\d', content)
+    if phones:
+        signatures["phone_numbers"] = [p.strip() for p in phones[:5]]
+
+    # Detect which behavioral pattern categories triggered
+    all_pattern_sets = [
+        ("urgency", URGENCY_PATTERNS),
+        ("smishing", SMISHING_PATTERNS),
+    ]
+    for name, patterns in all_pattern_sets:
+        for p in patterns:
+            try:
+                if re.search(p, content_lower):
+                    signatures["behavioral_flags"].append(name)
+                    break
+            except Exception:
+                pass
+
+    # Dedupe all lists
+    for k in signatures:
+        if isinstance(signatures[k], list):
+            signatures[k] = list(dict.fromkeys(signatures[k]))
+
+    return signatures
+
+
+def memory_learn(content: str, content_type: str, correct_verdict: str, original_rank: str, original_score, comment: str = ""):
+    """
+    Learn from a wrong detection. Stores URLs, text patterns, AND extracts
+    unique scam signatures (domains, keywords, TLDs, brands) so that similar
+    future content is caught even if it's not an exact match.
+    """
+    with _memory_lock:
+        now = datetime.utcnow().isoformat()
+        urls_found = []
+
+        # Extract URLs from content
+        if content_type == "url":
+            urls_found = [content.strip()]
+        else:
+            urls_found = _extract_urls_from_text(content)
+
+        # Store URL corrections
+        for url in urls_found:
+            url_lower = url.lower().strip().rstrip('/')
+            entry = {
+                "reason": comment or f"User corrected from {original_rank}",
+                "reported_at": now,
+                "original_rank": original_rank,
+                "original_score": original_score
+            }
+            if correct_verdict == "scam":
+                _learned_memory["known_scam_urls"][url_lower] = entry
+                _learned_memory["known_safe_urls"].pop(url_lower, None)
+                logger.info(f"🧠 LEARNED: URL marked as SCAM → {url_lower}")
+            elif correct_verdict == "safe":
+                _learned_memory["known_safe_urls"][url_lower] = entry
+                _learned_memory["known_scam_urls"].pop(url_lower, None)
+                logger.info(f"🧠 LEARNED: URL marked as SAFE → {url_lower}")
+
+        # Store text pattern fingerprint (for non-URL text content)
+        if content_type in ("text", "image_base64_extracted") and len(content) > 20:
+            fp = _text_fingerprint(content)
+            entry = {
+                "preview": content[:200],
+                "reason": comment or f"User corrected from {original_rank}",
+                "reported_at": now,
+                "original_rank": original_rank
+            }
+            if correct_verdict == "scam":
+                _learned_memory["known_scam_patterns"][fp] = entry
+                _learned_memory["known_safe_patterns"].pop(fp, None)
+                logger.info(f"🧠 LEARNED: Text pattern marked as SCAM (hash: {fp})")
+            elif correct_verdict == "safe":
+                _learned_memory["known_safe_patterns"][fp] = entry
+                _learned_memory["known_scam_patterns"].pop(fp, None)
+                logger.info(f"🧠 LEARNED: Text pattern marked as SAFE (hash: {fp})")
+
+        # ── SIGNATURE EXTRACTION (New!) ──
+        # When content is reported as scam, extract unique scam signatures
+        # so we can catch similar (but not identical) scams in the future
+        if correct_verdict == "scam":
+            sigs = _extract_scam_signatures(content, content_type)
+            # Only store if we found meaningful signatures
+            has_meaningful = any([
+                sigs.get("domains"),
+                sigs.get("domain_keywords"),
+                sigs.get("brand_targets"),
+                sigs.get("phishing_keywords"),
+            ])
+            if has_meaningful:
+                sig_entry = {
+                    "extracted_at": now,
+                    "content_type": content_type,
+                    "original_rank": original_rank,
+                    "correct_verdict": correct_verdict,
+                    "signatures": sigs,
+                    "reason": comment or f"Extracted from user correction"
+                }
+                _learned_memory.setdefault("learned_signatures", []).append(sig_entry)
+                logger.info(f"🧠 SIGNATURE EXTRACTED: domains={sigs['domains']}, "
+                           f"keywords={sigs['domain_keywords']}, "
+                           f"brands={sigs['brand_targets']}")
+
+        _learned_memory["stats"]["corrections"] = _learned_memory["stats"].get("corrections", 0) + 1
+        _save_memory()
+
+def memory_check(urls: list[str], text: str) -> dict:
+    """
+    Check content against learned memory.
+    First checks exact URL/text matches, then performs signature-based fuzzy matching
+    against learned scam signatures to catch similar (not identical) content.
+    Returns: {matched: bool, verdict: str|None, source: str, detail: str, signature_boost: int}
+    """
+    with _memory_lock:
+        # ── Exact URL match ──
+        for url in urls:
+            url_lower = url.lower().strip().rstrip('/')
+            if url_lower in _learned_memory.get("known_scam_urls", {}):
+                entry = _learned_memory["known_scam_urls"][url_lower]
+                return {
+                    "matched": True,
+                    "verdict": "Scam",
+                    "source": "Learning Memory",
+                    "detail": f"Previously reported as scam: {entry.get('reason', 'User feedback')}",
+                    "signature_boost": 0
+                }
+            if url_lower in _learned_memory.get("known_safe_urls", {}):
+                entry = _learned_memory["known_safe_urls"][url_lower]
+                return {
+                    "matched": True,
+                    "verdict": "Safe",
+                    "source": "Learning Memory",
+                    "detail": f"Previously confirmed safe: {entry.get('reason', 'User feedback')}",
+                    "signature_boost": 0
+                }
+
+        # ── Exact text pattern match ──
+        if text and len(text) > 20:
+            fp = _text_fingerprint(text)
+            if fp in _learned_memory.get("known_scam_patterns", {}):
+                entry = _learned_memory["known_scam_patterns"][fp]
+                return {
+                    "matched": True,
+                    "verdict": "Scam",
+                    "source": "Learning Memory",
+                    "detail": f"Text pattern previously reported as scam: {entry.get('reason', 'User feedback')}",
+                    "signature_boost": 0
+                }
+            if fp in _learned_memory.get("known_safe_patterns", {}):
+                entry = _learned_memory["known_safe_patterns"][fp]
+                return {
+                    "matched": True,
+                    "verdict": "Safe",
+                    "source": "Learning Memory",
+                    "detail": f"Text pattern previously confirmed safe: {entry.get('reason', 'User feedback')}",
+                    "signature_boost": 0
+                }
+
+        # ── Signature-based fuzzy matching (New!) ──
+        # Even if the exact URL/text is new, check if it shares signatures
+        # with previously reported scams (similar domain, same brand target, etc.)
+        learned_sigs = _learned_memory.get("learned_signatures", [])
+        if learned_sigs and isinstance(learned_sigs, list):
+            # Determine content for signature extraction
+            combined_content = ""
+            current_type = "text"
+            if urls:
+                combined_content = urls[0]
+                current_type = "url"
+            elif text:
+                combined_content = text
+
+            if combined_content:
+                current_sigs = _extract_scam_signatures(combined_content, current_type)
+                best_match_score = 0
+                best_match_detail = ""
+
+                for stored in learned_sigs:
+                    if not isinstance(stored, dict):
+                        continue
+                    stored_sigs = stored.get("signatures", {})
+                    if not isinstance(stored_sigs, dict):
+                        continue
+                    match_score = 0
+                    match_reasons = []
+
+                    # Domain match (strongest signal — same registered domain)
+                    for d in current_sigs.get("domains", []):
+                        if d in stored_sigs.get("domains", []):
+                            match_score += 40
+                            match_reasons.append(f"Known scam domain: {d}")
+
+                    # Domain keyword overlap (2+ shared keywords)
+                    current_dkw = set(current_sigs.get("domain_keywords", []))
+                    stored_dkw = set(stored_sigs.get("domain_keywords", []))
+                    kw_overlap = current_dkw & stored_dkw
+                    if len(kw_overlap) >= 2:
+                        match_score += 20
+                        match_reasons.append(f"Matching scam keywords: {', '.join(kw_overlap)}")
+
+                    # Brand impersonation match (same brand being targeted)
+                    current_brands = set(current_sigs.get("brand_targets", []))
+                    stored_brands = set(stored_sigs.get("brand_targets", []))
+                    brand_overlap = current_brands & stored_brands
+                    if brand_overlap:
+                        match_score += 25
+                        match_reasons.append(f"Same brand target: {', '.join(brand_overlap)}")
+
+                    # Behavioral flag overlap
+                    current_flags = set(current_sigs.get("behavioral_flags", []))
+                    stored_flags = set(stored_sigs.get("behavioral_flags", []))
+                    if current_flags & stored_flags:
+                        match_score += 10
+
+                    if match_score > best_match_score:
+                        best_match_score = match_score
+                        best_match_detail = "; ".join(match_reasons)
+
+                # If signature match is strong enough, boost detection
+                if best_match_score >= 35:
+                    return {
+                        "matched": True,
+                        "verdict": "Scam",
+                        "source": "Signature Memory",
+                        "detail": f"Matches learned scam signatures: {best_match_detail}",
+                        "signature_boost": best_match_score
+                    }
+                elif best_match_score >= 20:
+                    return {
+                        "matched": True,
+                        "verdict": "Suspicious",
+                        "source": "Signature Memory",
+                        "detail": f"Partially matches learned scam signatures: {best_match_detail}",
+                        "signature_boost": best_match_score
+                    }
+
+    return {"matched": False, "verdict": None, "source": None, "detail": "No match in learning memory", "signature_boost": 0}
+
+# ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
 TRUSTED_BRANDS = [
@@ -120,6 +467,74 @@ URL_SHORTENERS = [
 ]
 
 CHAR_SUBS = {"a": "@", "o": "0", "i": "1", "l": "1", "e": "3", "s": "5"}
+
+# Unicode homoglyphs — Cyrillic / Greek letters that look identical to Latin
+HOMOGLYPH_MAP = {
+    '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
+    '\u0445': 'x', '\u0443': 'y', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h',
+    '\u0501': 'd', '\u051b': 'q', '\u0455': 's', '\u0442': 't', '\u057d': 's',
+    '\u0410': 'A', '\u0412': 'B', '\u0415': 'E', '\u041a': 'K', '\u041c': 'M',
+    '\u041d': 'H', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C', '\u0422': 'T',
+    '\u0425': 'X', '\u0427': 'Y',
+    # Greek confusables
+    '\u03b1': 'a', '\u03bf': 'o', '\u03c1': 'p', '\u03b5': 'e', '\u03b9': 'i',
+    '\u0391': 'A', '\u0392': 'B', '\u0395': 'E', '\u0397': 'H', '\u039a': 'K',
+    '\u039c': 'M', '\u039d': 'N', '\u039f': 'O', '\u03a1': 'P', '\u03a4': 'T',
+    '\u03a7': 'X', '\u0396': 'Z',
+}
+
+# Dangerous URI schemes (near-100% malicious in phishing context)
+DANGEROUS_URI_SCHEMES = ["data:", "javascript:", "blob:", "vbscript:"]
+
+# Double-extension / executable masquerade in URLs
+DANGEROUS_DOUBLE_EXTENSIONS = re.compile(
+    r'\.(pdf|doc|docx|xls|xlsx|jpg|png|gif|mp3|mp4|txt|csv|zip|rar)'
+    r'\.(exe|scr|bat|cmd|com|pif|vbs|js|msi|ps1|wsf|hta)',
+    re.IGNORECASE
+)
+
+import math
+
+def _domain_entropy(domain: str) -> float:
+    """Shannon entropy of a domain label — random domains have entropy > 3.5."""
+    if not domain:
+        return 0.0
+    freq = {}
+    for c in domain:
+        freq[c] = freq.get(c, 0) + 1
+    length = len(domain)
+    return -sum((cnt / length) * math.log2(cnt / length) for cnt in freq.values())
+
+def _normalize_homoglyphs(text: str) -> tuple[str, bool]:
+    """Replace homoglyphs with ASCII equivalents. Returns (normalized, had_homoglyphs)."""
+    result = []
+    found = False
+    for ch in text:
+        if ch in HOMOGLYPH_MAP:
+            result.append(HOMOGLYPH_MAP[ch])
+            found = True
+        else:
+            result.append(ch)
+    return ''.join(result), found
+
+def _is_dangerous_uri(url: str) -> bool:
+    """Check if URL uses a dangerous scheme like data: or javascript:."""
+    lower = url.strip().lower()
+    return any(lower.startswith(scheme) for scheme in DANGEROUS_URI_SCHEMES)
+
+def _has_double_extension(url: str) -> bool:
+    """Detect double-extension tricks like invoice.pdf.exe in URL path."""
+    try:
+        path = urlparse(url).path
+        return bool(DANGEROUS_DOUBLE_EXTENSIONS.search(path))
+    except Exception:
+        return False
+
+def _is_punycode(hostname: str) -> bool:
+    """Detect punycode / internationalized domain names (xn-- prefix)."""
+    if not hostname:
+        return False
+    return any(part.startswith("xn--") for part in hostname.lower().split("."))
 
 # Phishing keywords commonly found in malicious URL paths
 PHISHING_PATH_KEYWORDS = [
@@ -193,10 +608,45 @@ def check_openphish(url: str):
     return False, None, None
 
 
+def check_urlscan(url: str):
+    """Check URLScan.io community API for known malicious URLs."""
+    try:
+        r = requests.get(
+            f"https://urlscan.io/api/v1/search/?q=page.url:\"{url}\"&size=1",
+            timeout=5,
+            headers={"User-Agent": "PhishGuard-AI/1.0"}
+        )
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get("results", [])
+            if results:
+                verdicts = results[0].get("verdicts", {})
+                overall = verdicts.get("overall", {})
+                if overall.get("malicious"):
+                    return True, "URLScan.io", "URL flagged as malicious by URLScan.io"
+    except Exception:
+        pass
+    return False, None, None
+
+
+def resolve_redirects(url: str, max_hops: int = 5) -> str:
+    """Follow URL redirects to find the final destination. Returns final URL."""
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=3,
+                          headers={"User-Agent": "Mozilla/5.0"},
+                          verify=False)
+        final_url = r.url
+        if final_url != url:
+            logger.info(f"  🔗 Redirect chain: {url} → {final_url}")
+        return final_url
+    except Exception:
+        return url
+
+
 def run_threat_intel(url: str):
     """Check all threat-intel feeds. Returns dict with results."""
     sources_checked = []
-    for checker in [check_urlhaus, check_phishtank, check_openphish]:
+    for checker in [check_urlhaus, check_phishtank, check_openphish, check_urlscan]:
         hit, source, detail = checker(url)
         if hit:
             logger.info(f"  ⚡ Threat intel HIT: {source} — {detail}")
@@ -212,7 +662,7 @@ def run_threat_intel(url: str):
         "triggered": False,
         "source": None,
         "detail": "Not found in any threat intelligence feed",
-        "sources_checked": ["URLhaus", "PhishTank", "OpenPhish"]
+        "sources_checked": ["URLhaus", "PhishTank", "OpenPhish", "URLScan.io"]
     }
 
 
@@ -253,7 +703,10 @@ def check_typosquatting(domain: str) -> tuple[bool, list[str]]:
     for orig, sub in CHAR_SUBS.items():
         dehy_normalised = dehy_normalised.replace(sub, orig)
 
-    variants = set([domain_lower, normalised, dehyphenated, dehy_normalised])
+    # Homoglyph-normalized variant
+    homo_normalised, had_homoglyphs = _normalize_homoglyphs(domain_lower)
+
+    variants = set([domain_lower, normalised, dehyphenated, dehy_normalised, homo_normalised])
 
     for brand in TRUSTED_BRANDS:
         if domain_lower == brand:
@@ -263,7 +716,9 @@ def check_typosquatting(domain: str) -> tuple[bool, list[str]]:
             # Exact or near-exact match
             dist = _levenshtein(v, brand)
             if dist <= 2:
-                if v != domain_lower:
+                if had_homoglyphs and v == homo_normalised:
+                    signals.append(f"Unicode homoglyph attack detected — impersonates '{brand}' using look-alike characters")
+                elif v != domain_lower:
                     signals.append(f"Character/formatting trick detected — impersonates '{brand}'")
                 else:
                     signals.append(f"Domain '{domain_lower}' looks like '{brand}' (typosquatting)")
@@ -331,6 +786,13 @@ def run_domain_analysis(url: str):
     """Analyse domain-level risk factors. Returns dict of signals."""
     signals = {}
     signal_details: list[str] = []
+
+    # 0 — Dangerous URI scheme (data:, javascript:, etc.)
+    if _is_dangerous_uri(url):
+        signals["dangerous_uri"] = True
+        signal_details.append(f"Dangerous URI scheme detected — likely malicious payload")
+        # Short-circuit: dangerous URIs score extremely high by themselves
+        return {"signals": signal_details, "flags": signals}
 
     try:
         parsed = urlparse(url)
@@ -429,6 +891,40 @@ def run_domain_analysis(url: str):
         signal_details.append(
             f"Phishing keywords in URL path: {', '.join(kw_list[:5])}"
         )
+
+    # 2j — Punycode / IDN detection
+    if _is_punycode(hostname):
+        signals["punycode_idn"] = True
+        signal_details.append("Internationalized domain name (punycode) — may disguise real domain")
+
+    # 2k — Domain entropy (random domain detection)
+    if domain and not signals.get("trusted_domain"):
+        entropy = _domain_entropy(domain)
+        if entropy > 3.8 and len(domain) >= 6:
+            signals["high_entropy_domain"] = True
+            signal_details.append(f"Randomized domain name detected (entropy={entropy:.2f})")
+
+    # 2l — Double-extension / executable masquerade in URL
+    if _has_double_extension(url):
+        signals["double_extension"] = True
+        signal_details.append("Double-extension trick detected in URL (e.g. .pdf.exe)")
+
+    # 2m — Phishing keywords in domain name itself
+    if domain and not signals.get("trusted_domain"):
+        domain_parts = re.split(r'[-_.]', domain.lower())
+        domain_kw_found = [kw for kw in PHISHING_DOMAIN_KEYWORDS if kw in domain_parts]
+        if len(domain_kw_found) >= 2:
+            signals["phishing_domain_keywords"] = len(domain_kw_found)
+            signal_details.append(
+                f"Multiple phishing keywords in domain name: {', '.join(domain_kw_found)}"
+            )
+        elif len(domain_kw_found) == 1:
+            # Single keyword in domain + other risk signals = still worth flagging
+            if hostname and len(re.split(r'[-_.]', hostname)) >= 3:
+                signals["phishing_domain_keywords"] = 1
+                signal_details.append(
+                    f"Phishing keyword in domain name: {domain_kw_found[0]}"
+                )
 
     return {"signals": signal_details, "flags": signals}
 
@@ -531,6 +1027,127 @@ SENSITIVE_PATTERNS = [
     r'\b(wire transfer|money transfer|western union|moneygram)\b'
 ]
 
+# ── NEW CATEGORIES ───────────────────────────────────────────────────
+
+INVOICE_PATTERNS = [
+    r'\b(invoice|receipt|bill|statement).{0,20}(attach|enclosed|below|overdue|unpaid|pending|past.?due)\b',
+    r'\b(overdue|outstanding|unpaid|past.?due).{0,20}(payment|balance|amount|invoice|bill)\b',
+    r'\b(pay|remit|transfer|wire|send).{0,20}(immediately|now|today|asap|urgently)\b',
+    r'\b(payment|invoice) (is )?(overdue|past.?due|required|needed|pending)\b',
+    r'\b(attach(ed)?|enclosed|see) (invoice|receipt|bill|statement|document)\b',
+    r'\b(outstanding|remaining|unpaid) (balance|amount|sum|fee)\b',
+    r'\bfinal (payment|invoice|bill|reminder)\b',
+    r'\b(late|overdue|penalty) (fee|charge|payment)\b',
+    r'\bremittance (advice|details|information)\b',
+    r'\bpurchase order\b'
+]
+
+CRYPTO_SCAM_PATTERNS = [
+    r'\b(bitcoin|ethereum|crypto|btc|eth|wallet|blockchain).{0,20}(verify|validate|confirm|recover|restore|unlock|secure)\b',
+    r'\b(verify|validate|confirm|recover|restore|unlock|secure).{0,20}(bitcoin|ethereum|crypto|btc|eth|wallet|blockchain)\b',
+    r'\b(guaranteed|double|triple).{0,20}(return|profit|investment|your money|earnings)\b',
+    r'\b(airdrop|mining|staking).{0,20}(reward|bonus|free|earn)\b',
+    r'\b(seed phrase|private key|recovery phrase|wallet key).{0,20}(enter|provide|confirm|verify|share)\b',
+    r'\b(enter|provide|confirm|verify|share).{0,20}(seed phrase|private key|recovery phrase|wallet key)\b',
+    r'\b(crypto|bitcoin|ethereum) (giveaway|bonus|reward|doubling)\b',
+    r'\b(invest|deposit).{0,20}(guaranteed|risk.?free|100%)\b',
+    r'\b(nft|token|coin).{0,20}(free|claim|mint|airdrop)\b',
+    r'\b(decentralized|defi).{0,20}(earn|profit|yield|reward)\b',
+    r'\bsend .{0,10}(btc|eth|crypto|bitcoin).{0,15}(receive|get back|double)\b',
+    r'\b(wallet|crypto|blockchain).{0,15}(locked|suspended|compromised|frozen)\b',
+    r'\b(recover|restore|unlock).{0,10}(your )?(funds|assets|balance|wallet)\b',
+]
+
+BEC_PATTERNS = [
+    r'\b(wire transfer|send funds|transfer money|bank transfer).{0,30}(urgent|asap|immediately|today|right away)\b',
+    r'\b(ceo|cfo|director|manager|boss|president|executive).{0,20}(instructed|asked|requested|wants|needs|authorized)\b',
+    r'\b(keep this|don.?t tell|between us|confidential|private).{0,20}(quiet|secret|private|discreet|between)\b',
+    r'\b(change|update|new).{0,15}(bank|account|wire|routing).{0,15}(details|information|number)\b',
+    r'\b(vendor|supplier|partner).{0,20}(payment|account|details).{0,15}(changed|updated|new)\b',
+    r'\bdo not (discuss|share|mention|tell)\b',
+    r'\btime.?sensitive.{0,20}(payment|transfer|transaction)\b',
+    r'\b(handle|process) this (personally|directly|quietly|discreetly)\b',
+    r'\b(w-?2|w-?9|tax form|employee list|payroll)\b'
+]
+
+JOB_SCAM_PATTERNS = [
+    r'\b(job|position|employment|work from home|remote work|part.?time).{0,20}(offer|opportunity|opening|available)\b',
+    r'\b(earn|make|salary|income).{0,10}\$\d{3,}\s*(per|a|each|every)\s*(day|hour|week|month)\b',
+    r'\b(earn|make|salary|income).{0,10}\d{3,}\s*(per|a|each|every)\s*(day|hour|week|month)\b',
+    r'\b(no experience|no interview|no resume|no degree).{0,10}(needed|required|necessary)\b',
+    r'\b(hiring|recruiting).{0,20}(immediately|now|today|urgently)\b',
+    r'\b(payment|fee|deposit).{0,15}(required|needed).{0,15}(before|to start|to begin)\b',
+    r'\b(easy|simple) (money|income|cash|earnings)\b',
+    r'\b(work|earn).{0,10}(from home|from anywhere|remotely).{0,15}\$?\d+\b',
+    r'\b(secret|mystery) shopper\b',
+    r'\b(data entry|envelope.?stuffing|paid survey)\b',
+    r'\bget paid (to|for) (click|like|share|review|watch)\b',
+    r'\bstart earning (today|now|immediately)\b'
+]
+
+SMISHING_PATTERNS = [
+    r'\b(parcel|package|delivery|shipment|courier).{0,25}(confirm|verify|update|check|validate).{0,20}(address|otp|details|identity|info)\b',
+    r'\b(confirm|verify|update|check|validate).{0,20}(parcel|package|delivery|shipment|courier|address)\b',
+    r'\b(otp|one.?time.?password|verification code|security code).{0,20}(do not|don.?t|never).{0,10}share\b',
+    r'\b(if this wasn.?t you|if you did.?n.?t|not authorized by you|if not you).{0,20}(click|visit|tap|call|go to)\b',
+    r'\b(click|tap|visit|go to|open).{0,15}(link|here|below|this|url).{0,15}(to |and )?(verify|confirm|update|cancel|stop|secure|check)\b',
+    r'\b(kyc|pan card|aadhar|aadhaar|pan.?verification)\b',
+    r'\b(redelivery|redeliver|reschedule.{0,10}delivery|customs?.{0,10}fee|delivery.{0,10}fee)\b',
+    r'\b(dear sir|dear madam|dear beneficiary|dear friend|respected sir)\b',
+    r'\bkindly (verify|confirm|provide|update|click|respond|share|fill|submit|enter)\b',
+    r'\b(plz|pls|plse)\b.{0,20}(confirm|verify|update|share|click|send|provide)\b',
+    r'\b(your.{0,10}(otp|code|pin) is.{0,5}\d{4,8})\b',
+    r'\b(sms|text|message).{0,15}(from|by|sent).{0,15}(bank|service|support|team)\b',
+    r'\b(update|verify|link).{0,10}(your|ur).{0,10}(pan|kyc|aadhar|bank|account)\b',
+    r'\b(expire|block|suspend|deactivat).{0,15}(today|tonight|within|in \d+|soon|immediately)\b',
+]
+
+PHISHING_DOMAIN_KEYWORDS = [
+    "account", "verify", "secure", "login", "alert", "check",
+    "update", "confirm", "support", "billing", "payment", "security",
+    "suspend", "restore", "recover", "unlock", "validate", "authenticate",
+    "signin", "password", "credential", "banking", "wallet", "reset"
+]
+
+
+def _grammar_anomaly_score(text: str) -> tuple[int, list[str]]:
+    """Detect grammar/formatting anomalies common in phishing. Returns (score, details)."""
+    score = 0
+    details = []
+
+    # Excessive caps: more than 40% of alpha chars are uppercase (minimum 20 chars)
+    alpha = [c for c in text if c.isalpha()]
+    if len(alpha) >= 20:
+        upper_ratio = sum(1 for c in alpha if c.isupper()) / len(alpha)
+        if upper_ratio > 0.6:
+            score += 12
+            details.append("Excessive ALL-CAPS text (common in scam messages)")
+        elif upper_ratio > 0.4:
+            score += 6
+            details.append("Unusual amount of uppercase text")
+
+    # Excessive exclamation/question marks
+    excl_count = text.count("!") + text.count("?")
+    if excl_count >= 8:
+        score += 10
+        details.append(f"Excessive punctuation ({excl_count} exclamation/question marks)")
+    elif excl_count >= 4:
+        score += 5
+        details.append(f"Above-average exclamation marks ({excl_count})")
+
+    # Repeated punctuation (!!! or ???)
+    if re.search(r'[!?]{3,}', text):
+        score += 8
+        details.append("Repeated punctuation (e.g., !!!, ???) — phishing indicator")
+
+    # Mixed scripts (Latin + Cyrillic in same text — possible homoglyph attack)
+    has_latin = bool(re.search(r'[a-zA-Z]', text))
+    has_cyrillic = bool(re.search(r'[\u0400-\u04FF]', text))
+    if has_latin and has_cyrillic:
+        score += 15
+        details.append("Mixed Latin and Cyrillic characters — possible homoglyph deception")
+
+    return score, details
 
 def _count_matches(text: str, patterns: list[str]) -> tuple[int, list[str]]:
     count = 0
@@ -576,9 +1193,9 @@ def run_behavioral_analysis(text: str):
             "detail": f"Threatening language detected ({c} signal{'s' if c > 1 else ''})"
         }
 
-    # Reward bait (+18 per, max 40)
+    # Reward bait (+20 per, max 45)
     c, m = _count_matches(text_lower, REWARD_PATTERNS)
-    score = min(c * 18, 40)
+    score = min(c * 20, 45)
     total_score += score
     if c:
         categories_triggered += 1
@@ -628,8 +1245,91 @@ def run_behavioral_analysis(text: str):
             "detail": f"Requests for sensitive personal data ({c} signal{'s' if c > 1 else ''})"
         }
 
-    # Multi-signal escalation bonus
-    if categories_triggered >= 5:
+    # ── NEW CATEGORIES ───────────────────────────────────────────────
+
+    # Invoice / Payment scam (+14 per, max 35)
+    c, m = _count_matches(text_lower, INVOICE_PATTERNS)
+    score = min(c * 14, 35)
+    total_score += score
+    if c:
+        categories_triggered += 1
+        results["invoice_scam"] = {
+            "triggered": True,
+            "score": score,
+            "matches": m,
+            "detail": f"Fake invoice / payment scam signals ({c} signal{'s' if c > 1 else ''})"
+        }
+
+    # Crypto / Investment scam (+16 per, max 35)
+    c, m = _count_matches(text_lower, CRYPTO_SCAM_PATTERNS)
+    score = min(c * 16, 35)
+    total_score += score
+    if c:
+        categories_triggered += 1
+        results["crypto_scam"] = {
+            "triggered": True,
+            "score": score,
+            "matches": m,
+            "detail": f"Crypto / investment scam signals ({c} signal{'s' if c > 1 else ''})"
+        }
+
+    # CEO / BEC fraud (+16 per, max 35)
+    c, m = _count_matches(text_lower, BEC_PATTERNS)
+    score = min(c * 16, 35)
+    total_score += score
+    if c:
+        categories_triggered += 1
+        results["bec_fraud"] = {
+            "triggered": True,
+            "score": score,
+            "matches": m,
+            "detail": f"Business Email Compromise (BEC) signals ({c} signal{'s' if c > 1 else ''})"
+        }
+
+    # Job offer scam (+14 per, max 30)
+    c, m = _count_matches(text_lower, JOB_SCAM_PATTERNS)
+    score = min(c * 14, 30)
+    total_score += score
+    if c:
+        categories_triggered += 1
+        results["job_scam"] = {
+            "triggered": True,
+            "score": score,
+            "matches": m,
+            "detail": f"Job offer / employment scam signals ({c} signal{'s' if c > 1 else ''})"
+        }
+
+    # Grammar / formatting anomalies
+    grammar_score, grammar_details = _grammar_anomaly_score(text)
+    total_score += grammar_score
+    if grammar_score > 0:
+        categories_triggered += 1
+        results["grammar_anomaly"] = {
+            "triggered": True,
+            "score": grammar_score,
+            "matches": grammar_details,
+            "detail": f"Grammar/formatting anomalies detected ({len(grammar_details)} signal{'s' if len(grammar_details) > 1 else ''})"
+        }
+
+    # SMS / Delivery / Smishing scam (+14 per, max 35)
+    c, m = _count_matches(text_lower, SMISHING_PATTERNS)
+    score = min(c * 14, 35)
+    total_score += score
+    if c:
+        categories_triggered += 1
+        results["smishing"] = {
+            "triggered": True,
+            "score": score,
+            "matches": m,
+            "detail": f"SMS/delivery phishing signals ({c} signal{'s' if c > 1 else ''})"
+        }
+
+    # Multi-signal escalation bonus (updated for 11 total categories)
+    if categories_triggered >= 7:
+        total_score += 45
+    elif categories_triggered >= 6:
+        total_score += 40
+    elif categories_triggered >= 5:
         total_score += 35
     elif categories_triggered >= 4:
         total_score += 25
@@ -644,79 +1344,206 @@ def run_behavioral_analysis(text: str):
 # ---------------------------------------------------------------------------
 # LAYER 4 — Scoring & Classification
 # ---------------------------------------------------------------------------
+# Configurable layer weights (must sum to 1.0)
+LAYER_WEIGHTS = {
+    "threat_intel": 0.45,      # Strongest signal — known malicious
+    "domain_analysis": 0.30,   # URL/domain structural signals
+    "behavioral": 0.25,        # Language/content patterns
+}
+
+
 def calculate_risk_score(threat_intel_hit: bool, domain_flags: dict,
                          behavioral_score: int, behavioral_categories: int):
-    score = 0
+    """
+    Weighted risk scoring system.
+    Each layer produces a raw score (0-100), then each is multiplied by its
+    weight.  Cross-layer amplification rewards convergent evidence.
+    Returns: (final_score, rank, emoji, weight_breakdown)
+    """
 
-    # Layer 1 — threat intel hit is very strong evidence
-    if threat_intel_hit:
-        score += 70
+    # ── Layer 1: Threat Intelligence (raw 0-100) ─────────────────────
+    threat_raw = 95 if threat_intel_hit else 0
 
-    # Layer 2 — domain signals
-    domain_score = 0
-    if domain_flags.get("typosquatting"):
-        domain_score += 35
-    if domain_flags.get("suspicious_tld"):
-        domain_score += 18
-    if domain_flags.get("ip_url"):
-        domain_score += 30
-    if domain_flags.get("excessive_subdomains"):
-        domain_score += 22
+    # ── Layer 2: Domain Analysis (raw 0-100) ─────────────────────────
+    domain_raw = 0
+    domain_signals_detail = {}
+
+    signal_weights = {
+        "dangerous_uri":          45,   # data:/javascript: — near-certain malicious
+        "typosquatting":          35,
+        "ip_url":                 30,
+        "double_extension":       30,   # .pdf.exe tricks
+        "at_symbol":              25,
+        "excessive_subdomains":   22,
+        "punycode_idn":           22,   # internationalized domain abuse
+        "url_shortener":          20,
+        "suspicious_tld":         18,
+        "high_entropy_domain":    18,   # randomized domain names
+        "url_length_extreme":     15,
+        "no_https":               12,
+        "encoded_chars":          10,
+        "url_length_long":        6,
+    }
+
+    for signal_name, weight in signal_weights.items():
+        if domain_flags.get(signal_name):
+            domain_raw += weight
+            domain_signals_detail[signal_name] = weight
+
+    # Domain age
     age = domain_flags.get("domain_age_days")
     if age is not None:
         if age < 30:
-            domain_score += 28
+            domain_raw += 28
+            domain_signals_detail["new_domain_<30d"] = 28
         elif age < 90:
-            domain_score += 12
-    if domain_flags.get("no_https"):
-        domain_score += 12
-    if domain_flags.get("url_shortener"):
-        domain_score += 18
-    if domain_flags.get("url_length_extreme"):
-        domain_score += 12
-    if domain_flags.get("url_length_long"):
-        domain_score += 6
-    if domain_flags.get("at_symbol"):
-        domain_score += 22
-    if domain_flags.get("encoded_chars"):
-        domain_score += 8
+            domain_raw += 12
+            domain_signals_detail["young_domain_<90d"] = 12
+
     # Phishing keywords in path
     path_kw = domain_flags.get("phishing_path_keywords", 0)
     if isinstance(path_kw, int) and path_kw > 0:
-        domain_score += min(path_kw * 8, 25)
+        pw = min(path_kw * 8, 25)
+        domain_raw += pw
+        domain_signals_detail["phishing_path_keywords"] = pw
 
-    # Count how many domain flags triggered (excluding meta flags)
+    # Phishing keywords in domain name
+    domain_kw = domain_flags.get("phishing_domain_keywords", 0)
+    if isinstance(domain_kw, int) and domain_kw > 0:
+        dw = min(domain_kw * 12, 30)
+        domain_raw += dw
+        domain_signals_detail["phishing_domain_keywords"] = dw
+
+    # Multi-signal convergence bonus
     domain_flag_count = sum(1 for k, v in domain_flags.items()
-                           if v and k not in ("trusted_domain", "domain_age_days", "phishing_path_keywords"))
-    # Multi-domain-signal bonus
-    if domain_flag_count >= 4:
-        domain_score += 20
+                           if v and k not in ("trusted_domain", "domain_age_days",
+                                              "phishing_path_keywords", "phishing_domain_keywords"))
+    if domain_flag_count >= 5:
+        domain_raw += 25
+    elif domain_flag_count >= 4:
+        domain_raw += 20
     elif domain_flag_count >= 3:
-        domain_score += 15
+        domain_raw += 15
     elif domain_flag_count >= 2:
-        domain_score += 8
-    score += min(domain_score, 60)
+        domain_raw += 8
 
-    # Layer 3 — behavioral signals (raised cap)
-    score += min(behavioral_score, 65)
+    domain_raw = min(domain_raw, 100)
 
-    # Cross-layer amplification: when BOTH domain AND behavioral trigger significantly
-    if domain_score >= 20 and behavioral_score >= 20:
-        score += 15
-    elif domain_score >= 10 and behavioral_score >= 10:
-        score += 8
+    # ── Layer 3: Behavioral (raw 0-100) ──────────────────────────────
+    behavioral_raw = min(behavioral_score, 100)
 
-    score = min(score, 100)
+    # ── Dynamic weight adjustment ────────────────────────────────────
+    # For text-only scans (no URL/domain data), boost behavioral weight
+    has_url_data = domain_raw > 0 or threat_raw > 0
+    if has_url_data:
+        w_threat = LAYER_WEIGHTS["threat_intel"]
+        w_domain = LAYER_WEIGHTS["domain_analysis"]
+        w_behav  = LAYER_WEIGHTS["behavioral"]
+    else:
+        # Text-only: behavioral gets the dominant weight for accurate text scam detection
+        w_threat = 0.05
+        w_domain = 0.05
+        w_behav  = 0.90
 
-    # Classification thresholds
-    if score <= 20:
+    # ── Weighted combination ─────────────────────────────────────────
+    weighted_threat  = threat_raw  * w_threat
+    weighted_domain  = domain_raw * w_domain
+    weighted_behav   = behavioral_raw * w_behav
+    score = weighted_threat + weighted_domain + weighted_behav
+
+    # Cross-layer amplification (convergent evidence from multiple layers)
+    active_layers = sum(1 for x in [threat_raw, domain_raw, behavioral_raw] if x > 15)
+    if active_layers >= 3:
+        score *= 1.35    # All three layers agree → strong boost
+    elif active_layers == 2:
+        score *= 1.18    # Two layers agree → moderate boost
+
+    # Specifically when domain AND behavioral converge
+    if domain_raw >= 25 and behavioral_raw >= 25:
+        score += 10
+
+    score = min(round(score), 100)
+
+    # ── Confidence calculation ───────────────────────────────────────
+    confidence_factors = 0
+    confidence_max = 0
+
+    # Threat intel checked?
+    confidence_max += 30
+    if threat_raw > 0:
+        confidence_factors += 30
+    else:
+        confidence_factors += 15
+
+    # Domain data available?
+    has_domain_data = any(domain_flags.get(k) is not None
+                         for k in ("trusted_domain", "domain_age_days", "typosquatting"))
+    confidence_max += 40
+    if has_domain_data:
+        confidence_factors += 35 if domain_flag_count > 0 else 25
+
+    # Behavioral analysis ran?
+    confidence_max += 30
+    if behavioral_categories > 0:
+        confidence_factors += 30
+    elif behavioral_raw == 0:
+        confidence_factors += 15
+
+    confidence = round(confidence_factors / confidence_max * 100) if confidence_max > 0 else 50
+
+    # ── Classification ───────────────────────────────────────────────
+    # Tighter thresholds for better detection
+    if score <= 15:
         rank, emoji = "Safe", "🛡️"
-    elif score <= 40:
+    elif score <= 30:
         rank, emoji = "Suspicious", "⚠️"
     else:
         rank, emoji = "Scam", "🚨"
 
-    return score, rank, emoji
+    # Override: behavioral has 4+ categories AND strong score → force Scam
+    if behavioral_categories >= 4 and behavioral_score >= 40:
+        rank, emoji = "Scam", "🚨"
+        score = max(score, 41)
+
+    # Override: behavioral has 3+ categories AND decent score → at least Suspicious, push toward Scam
+    if behavioral_categories >= 3 and behavioral_score >= 30 and rank != "Scam":
+        rank, emoji = "Suspicious", "⚠️"
+        score = max(score, 31)
+
+    # Override: if behavioral alone has 4+ categories, at least Suspicious
+    if behavioral_categories >= 4 and rank == "Safe":
+        rank, emoji = "Suspicious", "⚠️"
+        score = max(score, 25)
+
+    # Override: if behavioral has 2+ categories, never Safe
+    if behavioral_categories >= 2 and rank == "Safe":
+        rank, emoji = "Suspicious", "⚠️"
+        score = max(score, 18)
+
+    # Override: dangerous URI = always Scam
+    if domain_flags.get("dangerous_uri"):
+        rank, emoji = "Scam", "🚨"
+        score = max(score, 85)
+
+    # Override: non-trusted domain with phishing keywords/signals = at least Suspicious
+    if domain_flags.get("trusted_domain") is False:
+        has_phishing_signals = any(domain_flags.get(k) for k in (
+            "phishing_domain_keywords", "phishing_path_keywords",
+            "typosquatting", "suspicious_tld", "ip_url"))
+        if has_phishing_signals and rank == "Safe":
+            rank, emoji = "Suspicious", "⚠️"
+            score = max(score, 20)
+
+    weight_breakdown = {
+        "threat_intel":  {"raw": threat_raw,     "weight": w_threat,  "weighted": round(weighted_threat, 1)},
+        "domain":        {"raw": domain_raw,     "weight": w_domain, "weighted": round(weighted_domain, 1),
+                          "signals": domain_signals_detail},
+        "behavioral":    {"raw": behavioral_raw, "weight": w_behav,   "weighted": round(weighted_behav, 1)},
+        "amplification": {"active_layers": active_layers, "applied": active_layers >= 2},
+        "confidence":    confidence
+    }
+
+    return score, rank, emoji, weight_breakdown
 
 
 # ---------------------------------------------------------------------------
@@ -780,7 +1607,8 @@ def analyze():
 
     if input_type == "url":
         url = content
-        if not url.startswith("http"):
+        # Only prepend http:// for normal URLs, not dangerous schemes
+        if not url.startswith("http") and not _is_dangerous_uri(url):
             url = "http://" + url
         urls_to_check.append(url)
         # Use full URL as analysis text (domain + path + query carry signals)
@@ -814,6 +1642,19 @@ def analyze():
         return jsonify({"error": f"Unknown input type: '{input_type}'"}), 400
 
     # ----- Run Layers -----
+
+    # Pre-processing: resolve URL redirects (especially URL shorteners)
+    resolved_urls = []
+    for url in urls_to_check:
+        # Skip redirect following for dangerous schemes (they can't be resolved)
+        if _is_dangerous_uri(url):
+            resolved_urls.append(url)
+        else:
+            final = resolve_redirects(url)
+            resolved_urls.append(final)
+            if final != url:
+                resolved_urls.append(url)  # Also check the original
+    urls_to_check = list(dict.fromkeys(resolved_urls))  # Deduplicate, preserve order
 
     # Layer 1 — Threat Intel (on each URL)
     threat_intel_result = {
@@ -851,8 +1692,8 @@ def analyze():
     # Layer 3 — Behavioral
     behavioral_score, behavioral_results, behavioral_cats = run_behavioral_analysis(analysis_text)
 
-    # Layer 4 — Score & classify
-    risk_score, rank, emoji = calculate_risk_score(
+    # Layer 4 — Score & classify (weighted)
+    risk_score, rank, emoji, weight_breakdown = calculate_risk_score(
         threat_intel_result["triggered"],
         domain_result["flags"],
         behavioral_score,
@@ -867,8 +1708,29 @@ def analyze():
         rank = "Safe"
         emoji = "🛡️"
 
+    # Layer 0 — Learning Memory (overrides everything if matched)
+    memory_result = memory_check(urls_to_check, analysis_text)
+    memory_overridden = False
+    if memory_result["matched"]:
+        logger.info(f"  🧠 Memory match! Verdict override → {memory_result['verdict']}")
+        memory_overridden = True
+        if memory_result["verdict"] == "Scam":
+            risk_score = max(risk_score, 85)
+            rank = "Scam"
+            emoji = "🚨"
+        elif memory_result["verdict"] == "Safe":
+            risk_score = 0
+            rank = "Safe"
+            emoji = "🛡️"
+
     # Build layer breakdown for the frontend
     layers = {
+        "learning_memory": {
+            "triggered": memory_result["matched"],
+            "source": memory_result.get("source"),
+            "detail": memory_result.get("detail", ""),
+            "overridden": memory_overridden
+        },
         "threat_intel": {
             "triggered": threat_intel_result["triggered"],
             "source": threat_intel_result.get("source"),
@@ -907,7 +1769,216 @@ def analyze():
         "risk_score": risk_score,
         "rank": rank,
         "emoji": emoji,
+        "confidence": weight_breakdown.get("confidence", 50),
+        "elapsed_ms": elapsed,
+        "weight_breakdown": weight_breakdown,
         "layers": layers
+    })
+
+
+# ---------------------------------------------------------------------------
+# User Feedback — dynamic, privacy-preserving correction system
+# ---------------------------------------------------------------------------
+# Correction log — anonymous signals only (no user content stored)
+CORRECTIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "correction_signals.json")
+
+_correction_signals = {
+    "corrections": [],          # [{original, corrected, signal_type, ts}]
+    "confidence_validations": 0,
+    "total_feedback": 0,
+    "weight_adjustments": {}
+}
+
+def _load_corrections():
+    global _correction_signals
+    if os.path.exists(CORRECTIONS_FILE):
+        try:
+            with open(CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+                _correction_signals = json.load(f)
+            logger.info(f"📊 Loaded {len(_correction_signals.get('corrections', []))} correction signals")
+        except Exception as e:
+            logger.warning(f"Could not load corrections: {e}")
+
+def _save_corrections():
+    try:
+        with open(CORRECTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_correction_signals, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save corrections: {e}")
+
+def _apply_weight_adjustment(original_verdict: str, corrected_verdict: str, signal_type: str):
+    """
+    Micro-adjust LAYER_WEIGHTS based on correction patterns.
+    If a layer caused a false positive (over-scored), slightly reduce its weight.
+    If a layer missed a threat (under-scored), slightly increase its weight.
+    Adjustments are capped to maintain system stability.
+    """
+    global LAYER_WEIGHTS
+    STEP = 0.008        # Small step per correction
+    MIN_W = 0.10        # No layer can drop below 10%
+    MAX_W = 0.60        # No layer can rise above 60%
+
+    # Determine which layer to adjust based on detected signal type
+    layer_map = {
+        "threat_intel": "threat_intel",
+        "domain": "domain_analysis",
+        "behavioral": "behavioral",
+    }
+
+    target_layer = layer_map.get(signal_type)
+    if not target_layer:
+        return  # Unknown signal type, skip
+
+    was_over = original_verdict in ("Scam", "Suspicious") and corrected_verdict == "Safe"
+    was_under = original_verdict == "Safe" and corrected_verdict in ("Scam", "Suspicious")
+    was_mismatch = original_verdict != corrected_verdict and not was_over and not was_under
+
+    if was_over:
+        # Layer over-contributed → reduce its weight, redistribute to others
+        reduction = min(STEP, LAYER_WEIGHTS[target_layer] - MIN_W)
+        if reduction > 0:
+            LAYER_WEIGHTS[target_layer] -= reduction
+            others = [k for k in LAYER_WEIGHTS if k != target_layer]
+            for o in others:
+                LAYER_WEIGHTS[o] += reduction / len(others)
+            logger.info(f"   ⚙️ Reduced '{target_layer}' weight by {reduction:.3f} (was over-scoring)")
+    elif was_under:
+        # Layer under-contributed → increase its weight, take from others
+        increase = min(STEP, MAX_W - LAYER_WEIGHTS[target_layer])
+        if increase > 0:
+            LAYER_WEIGHTS[target_layer] += increase
+            others = [k for k in LAYER_WEIGHTS if k != target_layer]
+            for o in others:
+                LAYER_WEIGHTS[o] -= increase / len(others)
+            logger.info(f"   ⚙️ Increased '{target_layer}' weight by {increase:.3f} (was under-scoring)")
+    elif was_mismatch:
+        # E.g., Suspicious→Scam or Scam→Suspicious — mild adjustment
+        adj = STEP * 0.5
+        increase = min(adj, MAX_W - LAYER_WEIGHTS[target_layer])
+        if increase > 0:
+            LAYER_WEIGHTS[target_layer] += increase
+            others = [k for k in LAYER_WEIGHTS if k != target_layer]
+            for o in others:
+                LAYER_WEIGHTS[o] -= increase / len(others)
+
+    # Clamp all weights and re-normalize to sum to 1.0
+    for k in LAYER_WEIGHTS:
+        LAYER_WEIGHTS[k] = max(MIN_W, min(MAX_W, LAYER_WEIGHTS[k]))
+    total = sum(LAYER_WEIGHTS.values())
+    for k in LAYER_WEIGHTS:
+        LAYER_WEIGHTS[k] = round(LAYER_WEIGHTS[k] / total, 4)
+
+    logger.info(f"   ⚙️ Current weights: {LAYER_WEIGHTS}")
+
+
+VALID_FEEDBACK = ("correct", "actually_safe", "actually_suspicious", "actually_scam")
+
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    """
+    Feedback system with learning memory.
+    - "correct" → validates confidence only (no weight changes, no content stored)
+    - corrections → adjusts weights, extracts scam signatures, persists to learning memory
+    """
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    fb_type = data.get("feedback", "").strip()
+    original_verdict = data.get("original_verdict", "").strip()
+    risk_score = data.get("risk_score", "?")
+    signal_type = data.get("signal_type", "").strip()   # "threat_intel", "domain", "behavioral"
+    comment = data.get("comment", "").strip()[:500]
+
+    if fb_type not in VALID_FEEDBACK:
+        return jsonify({"error": "Invalid feedback type"}), 400
+
+    _correction_signals["total_feedback"] = _correction_signals.get("total_feedback", 0) + 1
+
+    logger.info(f"{'='*50}")
+
+    if fb_type == "correct":
+        # ── Confidence validation only ──────────────────────────────────
+        _correction_signals["confidence_validations"] = _correction_signals.get("confidence_validations", 0) + 1
+        logger.info(f"✅ CORRECT feedback — verdict '{original_verdict}' validated")
+        logger.info(f"   Confidence validations total: {_correction_signals['confidence_validations']}")
+        _save_corrections()
+        logger.info(f"{'='*50}")
+        return jsonify({
+            "status": "ok",
+            "message": "Thank you! Your confirmation strengthens our detection confidence.",
+            "learned": False,
+            "action": "confidence_validated"
+        })
+
+    # ── Correction feedback ─────────────────────────────────────────
+    corrected_map = {
+        "actually_safe": "Safe",
+        "actually_suspicious": "Suspicious",
+        "actually_scam": "Scam"
+    }
+    corrected_verdict = corrected_map.get(fb_type, "")
+
+    logger.info(f"🔄 CORRECTION: {original_verdict} → {corrected_verdict}")
+    logger.info(f"   Signal type: {signal_type or 'unspecified'}")
+    logger.info(f"   Risk score: {risk_score}")
+    if comment:
+        logger.info(f"   Comment: {comment}")
+
+    # Store anonymous correction signal (NO user content)
+    signal = {
+        "original_verdict": original_verdict,
+        "corrected_verdict": corrected_verdict,
+        "detected_signal_type": signal_type or "unknown",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    _correction_signals.setdefault("corrections", []).append(signal)
+
+    # Apply micro weight adjustment
+    if signal_type:
+        _apply_weight_adjustment(original_verdict, corrected_verdict, signal_type)
+        _correction_signals["weight_adjustments"] = {
+            k: round(v, 4) for k, v in LAYER_WEIGHTS.items()
+        }
+
+    # ── LEARNING MEMORY — persist correction + extract scam signatures ──
+    content = data.get("content", "").strip()
+    content_type = data.get("content_type", "").strip()
+    learned_sigs = False
+    if content and content_type:
+        # Map feedback type to verdict for memory_learn
+        verdict_for_learn = ""
+        if fb_type == "actually_scam":
+            verdict_for_learn = "scam"
+        elif fb_type == "actually_safe":
+            verdict_for_learn = "safe"
+        elif fb_type == "actually_suspicious":
+            verdict_for_learn = "scam"  # Treat suspicious correction as scam for learning
+
+        if verdict_for_learn:
+            memory_learn(
+                content=content,
+                content_type=content_type,
+                correct_verdict=verdict_for_learn,
+                original_rank=original_verdict,
+                original_score=risk_score,
+                comment=comment
+            )
+            learned_sigs = True
+            logger.info(f"   🧠 Content persisted to learning memory (verdict: {verdict_for_learn})")
+    else:
+        logger.info(f"   ⚠️ No content received with feedback — cannot persist to learning memory")
+
+    _save_corrections()
+    logger.info(f"{'='*50}")
+
+    return jsonify({
+        "status": "ok",
+        "message": "Thank you! Your correction has been recorded and will improve future detection accuracy.",
+        "learned": True,
+        "learned_signatures": learned_sigs,
+        "action": "weights_adjusted"
     })
 
 
@@ -916,21 +1987,55 @@ def analyze():
 # ---------------------------------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health():
+    with _memory_lock:
+        learned_sigs = _learned_memory.get("learned_signatures", [])
+        mem_stats = {
+            "scam_urls": len(_learned_memory.get("known_scam_urls", {})),
+            "safe_urls": len(_learned_memory.get("known_safe_urls", {})),
+            "scam_patterns": len(_learned_memory.get("known_scam_patterns", {})),
+            "safe_patterns": len(_learned_memory.get("known_safe_patterns", {})),
+            "learned_signatures": len(learned_sigs) if isinstance(learned_sigs, list) else 0,
+            "total_feedback": _learned_memory.get("stats", {}).get("total_feedback", 0),
+            "corrections": _learned_memory.get("stats", {}).get("corrections", 0)
+        }
     return jsonify({
         "status": "ok",
         "ocr_available": OCR_AVAILABLE,
-        "whois_available": WHOIS_AVAILABLE
+        "whois_available": WHOIS_AVAILABLE,
+        "learning_memory": mem_stats,
+        "correction_signals": {
+            "total_corrections": len(_correction_signals.get("corrections", [])),
+            "confidence_validations": _correction_signals.get("confidence_validations", 0),
+            "total_feedback": _correction_signals.get("total_feedback", 0),
+            "current_weights": {k: round(v, 4) for k, v in LAYER_WEIGHTS.items()}
+        }
     })
 
 
 # ---------------------------------------------------------------------------
 # Start background threads & run
 # ---------------------------------------------------------------------------
+def _reset_canonical_weights():
+    """Reset LAYER_WEIGHTS to canonical defaults on every startup.
+    Prevents weight drift from past correction_signals corrupting detection."""
+    global LAYER_WEIGHTS
+    LAYER_WEIGHTS["threat_intel"] = 0.45
+    LAYER_WEIGHTS["domain_analysis"] = 0.30
+    LAYER_WEIGHTS["behavioral"] = 0.25
+    logger.info(f"⚖️  Layer weights reset to canonical defaults: {LAYER_WEIGHTS}")
+
+
 if __name__ == "__main__":
     logger.info("🛡️  PhishGuard AI starting...")
     logger.info(f"  OCR available: {OCR_AVAILABLE}")
     logger.info(f"  WHOIS available: {WHOIS_AVAILABLE}")
+    # Load learning memory and correction signals
+    _load_memory()
+    _load_corrections()
+    # Reset weights to canonical defaults (prevents drift from past corrections)
+    _reset_canonical_weights()
     # Start OpenPhish feed loader in background
     t = threading.Thread(target=_load_openphish, daemon=True)
     t.start()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="127.0.0.1", port=5000)
+
