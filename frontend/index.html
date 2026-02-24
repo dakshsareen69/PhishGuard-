@@ -21,13 +21,15 @@
         }
 
         :root {
-            --bg-deep: #06000f;
-            --bg-card: rgba(25, 10, 50, .55);
-            --bg-card-solid: #140a2e;
-            --bg-input: #0f0520;
+            --bg-deep: #050510;
+            --bg-card: rgba(20, 12, 45, .6);
+            --bg-card-solid: #120a28;
+            --bg-input: #0c0418;
             --accent: #a855f7;
             --accent2: #ec4899;
             --accent3: #7c3aed;
+            --cyan: #22d3ee;
+            --teal: #2dd4bf;
             --accent-dim: rgba(168, 85, 247, .12);
             --accent-glow: rgba(168, 85, 247, .3);
             --pink-dim: rgba(236, 72, 153, .1);
@@ -39,12 +41,12 @@
             --text-muted: #5a3d8a;
             --border: rgba(168, 85, 247, .18);
             --border-strong: rgba(168, 85, 247, .35);
-            --glass: rgba(25, 10, 50, .45);
+            --glass: rgba(20, 12, 45, .5);
             --glass-border: rgba(168, 85, 247, .12);
             --font-heading: 'Space Grotesk', system-ui, sans-serif;
             --font-code: 'Fira Code', 'JetBrains Mono', monospace;
-            --radius: 16px;
-            --radius-sm: 10px;
+            --radius: 18px;
+            --radius-sm: 12px;
             --radius-xs: 6px;
         }
 
@@ -146,47 +148,60 @@
         .app-wrap {
             position: relative;
             z-index: 1;
-            max-width: 860px;
+            max-width: 880px;
             margin: 0 auto;
-            padding: 2.5rem 1.5rem 3rem;
+            padding: 2rem 1.5rem 3rem;
             width: 100%
         }
 
         /* ===== HEADER ===== */
         .brand {
             text-align: center;
-            margin-bottom: 3rem
+            margin-bottom: 2rem
         }
 
         .brand-logo {
             display: inline-flex;
             align-items: center;
             gap: .7rem;
-            margin-bottom: 1rem;
+            margin-bottom: .8rem;
         }
 
         .brand-logo .logo-icon {
-            width: 52px;
-            height: 52px;
-            border-radius: 14px;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, var(--accent), var(--cyan));
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.6rem;
-            box-shadow: 0 0 30px rgba(168, 85, 247, .4);
+            font-size: 1.7rem;
+            box-shadow: 0 0 40px rgba(34, 211, 238, .25), 0 0 80px rgba(168, 85, 247, .15);
+            animation: shield-pulse 3s ease-in-out infinite;
+        }
+
+        @keyframes shield-pulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 40px rgba(34, 211, 238, .25), 0 0 80px rgba(168, 85, 247, .15);
+            }
+
+            50% {
+                box-shadow: 0 0 50px rgba(34, 211, 238, .35), 0 0 100px rgba(168, 85, 247, .25);
+            }
         }
 
         .brand h1 {
-            font-size: 2.6rem;
+            font-size: 2.8rem;
             font-weight: 700;
             letter-spacing: -.03em;
-            background: linear-gradient(135deg, #a855f7, #ec4899, #7c3aed);
+            background: linear-gradient(135deg, #a855f7, #22d3ee, #ec4899, #7c3aed);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            background-size: 200% 200%;
-            animation: gradient-shift 6s ease infinite;
+            background-size: 300% 300%;
+            animation: gradient-shift 8s ease infinite;
         }
 
         @keyframes gradient-shift {
@@ -206,9 +221,69 @@
         .brand-sub {
             color: var(--text-secondary);
             font-size: .95rem;
-            margin-top: .6rem;
+            margin-top: .5rem;
             font-weight: 400;
             letter-spacing: .01em;
+        }
+
+        /* ===== HERO STATS BAR ===== */
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 1.2rem;
+            margin: 1.5rem 0 2rem;
+            flex-wrap: wrap;
+        }
+
+        .hero-stat {
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .5rem 1rem;
+            background: var(--glass);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 30px;
+            font-size: .76rem;
+            color: var(--text-secondary);
+            transition: all .3s;
+        }
+
+        .hero-stat:hover {
+            border-color: var(--border-strong);
+            transform: translateY(-1px);
+        }
+
+        .hero-stat .stat-icon {
+            font-size: .9rem;
+        }
+
+        .hero-stat .stat-val {
+            font-family: var(--font-code);
+            font-weight: 600;
+            color: var(--cyan);
+            font-size: .82rem;
+        }
+
+        .hero-stat .stat-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: dot-blink 2s ease-in-out infinite;
+        }
+
+        @keyframes dot-blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .3;
+            }
         }
 
         .brand-sub .typing-cursor {
@@ -445,9 +520,9 @@
         .scan-btn {
             width: 100%;
             margin-top: 1.4rem;
-            padding: 1rem;
+            padding: 1.05rem;
             border: none;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            background: linear-gradient(135deg, var(--accent), var(--cyan));
             color: #fff;
             font-family: var(--font-heading);
             font-size: .95rem;
@@ -458,17 +533,17 @@
             letter-spacing: .02em;
             position: relative;
             overflow: hidden;
-            box-shadow: 0 4px 20px rgba(168, 85, 247, .3);
+            box-shadow: 0 4px 25px rgba(34, 211, 238, .2), 0 4px 15px rgba(168, 85, 247, .2);
         }
 
         .scan-btn:hover:not(:disabled) {
-            box-shadow: 0 6px 35px rgba(168, 85, 247, .45);
+            box-shadow: 0 6px 40px rgba(34, 211, 238, .3), 0 6px 25px rgba(168, 85, 247, .3);
             transform: translateY(-2px);
         }
 
         .scan-btn:active:not(:disabled) {
             transform: translateY(0);
-            box-shadow: 0 2px 15px rgba(168, 85, 247, .3)
+            box-shadow: 0 2px 15px rgba(34, 211, 238, .2)
         }
 
         .scan-btn:disabled {
@@ -499,7 +574,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 3.5rem 1rem;
+            padding: 2.5rem 1.5rem;
             text-align: center;
         }
 
@@ -516,7 +591,7 @@
             border-top-color: var(--accent);
             border-right-color: var(--accent2);
             animation: spin 1s linear infinite;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1.2rem;
             box-shadow: 0 0 30px var(--accent-dim);
         }
 
@@ -528,7 +603,8 @@
 
         .scanner p {
             color: var(--text-secondary);
-            font-size: .9rem
+            font-size: .9rem;
+            margin-bottom: 1.5rem;
         }
 
         .scanner .scan-dots::after {
@@ -551,6 +627,67 @@
 
             75% {
                 content: '...'
+            }
+        }
+
+        /* Scan stages */
+        .scan-stages {
+            width: 100%;
+            max-width: 380px;
+        }
+
+        .scan-stage {
+            display: flex;
+            align-items: center;
+            gap: .7rem;
+            padding: .5rem 0;
+            font-size: .78rem;
+            color: var(--text-muted);
+            transition: all .4s ease;
+        }
+
+        .scan-stage .stage-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: .65rem;
+            border: 1.5px solid var(--border);
+            flex-shrink: 0;
+            transition: all .4s ease;
+        }
+
+        .scan-stage.active {
+            color: var(--accent);
+        }
+
+        .scan-stage.active .stage-icon {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            box-shadow: 0 0 12px var(--accent-glow);
+            animation: pulse-glow 1.2s ease-in-out infinite;
+        }
+
+        .scan-stage.done {
+            color: var(--green);
+        }
+
+        .scan-stage.done .stage-icon {
+            border-color: var(--green);
+            background: rgba(52, 211, 153, .15);
+        }
+
+        @keyframes pulse-glow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 8px var(--accent-glow);
+            }
+
+            50% {
+                box-shadow: 0 0 20px var(--accent-glow);
             }
         }
 
@@ -660,6 +797,108 @@
             color: var(--text-secondary);
             max-width: 340px;
             line-height: 1.6
+        }
+
+        /* Confidence + Timing  */
+        .result-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-top: .6rem;
+            flex-wrap: wrap;
+        }
+
+        .meta-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            font-size: .72rem;
+            color: var(--text-secondary);
+            background: rgba(168, 85, 247, .06);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: .3rem .75rem;
+            font-family: var(--font-code);
+        }
+
+        .meta-chip .chip-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Weight Breakdown Bars */
+        .weight-breakdown {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            padding: 1rem 1.2rem;
+            background: rgba(168, 85, 247, .03);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+
+        .weight-heading {
+            font-size: .7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            margin-bottom: .9rem;
+            font-weight: 500;
+        }
+
+        .weight-row {
+            display: flex;
+            align-items: center;
+            gap: .7rem;
+            margin-bottom: .55rem;
+        }
+
+        .weight-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .weight-label {
+            font-size: .72rem;
+            color: var(--text-secondary);
+            width: 110px;
+            flex-shrink: 0;
+        }
+
+        .weight-bar-track {
+            flex: 1;
+            height: 6px;
+            background: rgba(168, 85, 247, .08);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .weight-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 1.2s cubic-bezier(.4, 0, .2, 1);
+            width: 0;
+        }
+
+        .weight-bar-fill.fill-threat {
+            background: linear-gradient(90deg, #f43f5e, #fb923c);
+        }
+
+        .weight-bar-fill.fill-domain {
+            background: linear-gradient(90deg, #a855f7, #7c3aed);
+        }
+
+        .weight-bar-fill.fill-behav {
+            background: linear-gradient(90deg, #3b82f6, #06b6d4);
+        }
+
+        .weight-val {
+            font-size: .68rem;
+            color: var(--text-muted);
+            font-family: var(--font-code);
+            width: 36px;
+            text-align: right;
+            flex-shrink: 0;
         }
 
         .rank-safe {
@@ -897,6 +1136,169 @@
             display: block
         }
 
+        /* ===== FEEDBACK ===== */
+        .feedback-section {
+            margin-top: 1.6rem;
+            padding-top: 1.4rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .feedback-heading {
+            font-size: .72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            margin-bottom: 1rem;
+            font-weight: 500;
+        }
+
+        .feedback-question {
+            font-size: .88rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .feedback-btns {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .fb-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: .7rem .8rem;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: rgba(15, 5, 30, .3);
+            color: var(--text-secondary);
+            font-family: var(--font-heading);
+            font-size: .78rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all .3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .4rem;
+        }
+
+        .fb-btn:hover {
+            border-color: var(--accent);
+            background: rgba(168, 85, 247, .08);
+            color: var(--text-primary);
+        }
+
+        .fb-btn.selected {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(168, 85, 247, .15), rgba(236, 72, 153, .08));
+            color: #e0c0ff;
+            box-shadow: 0 0 20px rgba(168, 85, 247, .1);
+        }
+
+        .fb-btn.correct:hover,
+        .fb-btn.correct.selected {
+            border-color: var(--green);
+            background: rgba(52, 211, 153, .1);
+            color: var(--green);
+            box-shadow: 0 0 18px rgba(52, 211, 153, .1);
+        }
+
+        .fb-btn.wrong-safe:hover,
+        .fb-btn.wrong-safe.selected {
+            border-color: var(--yellow);
+            background: rgba(251, 191, 36, .1);
+            color: var(--yellow);
+            box-shadow: 0 0 18px rgba(251, 191, 36, .1);
+        }
+
+        .fb-btn.wrong-scam:hover,
+        .fb-btn.wrong-scam.selected {
+            border-color: var(--red);
+            background: rgba(244, 63, 94, .1);
+            color: var(--red);
+            box-shadow: 0 0 18px rgba(244, 63, 94, .1);
+        }
+
+        .fb-btn.wrong-suspicious:hover,
+        .fb-btn.wrong-suspicious.selected {
+            border-color: #f59e0b;
+            background: rgba(245, 158, 11, .1);
+            color: #f59e0b;
+            box-shadow: 0 0 18px rgba(245, 158, 11, .1);
+        }
+
+        .fb-comment {
+            display: none;
+            margin-top: .6rem;
+        }
+
+        .fb-comment.visible {
+            display: block;
+            animation: fadeIn .3s ease;
+        }
+
+        .fb-comment textarea {
+            width: 100%;
+            min-height: 70px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: .7rem .9rem;
+            color: var(--text-primary);
+            font-family: var(--font-code);
+            font-size: .78rem;
+            outline: none;
+            resize: vertical;
+            transition: all .3s;
+        }
+
+        .fb-comment textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim), 0 0 20px rgba(168, 85, 247, .1);
+        }
+
+        .fb-submit {
+            margin-top: .6rem;
+            padding: .6rem 1.4rem;
+            border: none;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #fff;
+            font-family: var(--font-heading);
+            font-size: .78rem;
+            font-weight: 600;
+            border-radius: var(--radius-xs);
+            cursor: pointer;
+            transition: all .3s;
+        }
+
+        .fb-submit:hover:not(:disabled) {
+            box-shadow: 0 4px 20px rgba(168, 85, 247, .3);
+            transform: translateY(-1px);
+        }
+
+        .fb-submit:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .fb-thanks {
+            display: none;
+            padding: .8rem 1rem;
+            background: rgba(52, 211, 153, .08);
+            border: 1px solid rgba(52, 211, 153, .2);
+            border-radius: var(--radius-sm);
+            color: var(--green);
+            font-size: .82rem;
+            text-align: center;
+            animation: fadeIn .4s ease;
+        }
+
+        .fb-thanks.visible {
+            display: block;
+        }
+
         /* ===== FOOTER ===== */
         .app-footer {
             text-align: center;
@@ -924,10 +1326,28 @@
             color: var(--text-muted)
         }
 
+        .version-badge {
+            display: inline-block;
+            margin-top: .5rem;
+            font-size: .62rem;
+            color: var(--text-muted);
+            font-family: var(--font-code);
+            opacity: .6;
+        }
+
         /* ===== RESPONSIVE ===== */
         @media(max-width:640px) {
             .brand h1 {
-                font-size: 1.9rem
+                font-size: 2rem
+            }
+
+            .hero-stats {
+                gap: .6rem;
+            }
+
+            .hero-stat {
+                font-size: .68rem;
+                padding: .4rem .75rem;
             }
 
             .tab-btn {
@@ -971,8 +1391,32 @@
                 <div class="logo-icon">🛡️</div>
             </div>
             <h1>PhishGuard AI</h1>
-            <p class="brand-sub">Multi-layer phishing detection engine<span class="typing-cursor"></span></p>
+            <p class="brand-sub">Real-time multi-layer phishing detection engine<span class="typing-cursor"></span></p>
         </header>
+
+        <!-- HERO STATS -->
+        <div class="hero-stats">
+            <div class="hero-stat">
+                <span class="stat-icon">🛰️</span>
+                <span>Threat Feeds</span>
+                <span class="stat-val" id="stat-feeds">4</span>
+                <span class="stat-dot"></span>
+            </div>
+            <div class="hero-stat">
+                <span class="stat-icon">🧠</span>
+                <span>Detection Layers</span>
+                <span class="stat-val">5</span>
+            </div>
+            <div class="hero-stat">
+                <span class="stat-icon">📊</span>
+                <span>Scans</span>
+                <span class="stat-val" id="stat-scans">0</span>
+            </div>
+            <div class="hero-stat">
+                <span class="stat-icon">🔒</span>
+                <span>Privacy-First</span>
+            </div>
+        </div>
 
         <!-- TABS -->
         <div class="tabs" role="tablist">
@@ -1037,7 +1481,29 @@
         <!-- SCANNER -->
         <div class="scanner" id="scanner">
             <div class="scan-spinner"></div>
-            <p>Analyzing across threat databases<span class="scan-dots"></span></p>
+            <p id="scan-status-text">Initializing analysis engine<span class="scan-dots"></span></p>
+            <div class="scan-stages">
+                <div class="scan-stage" id="stage-init">
+                    <div class="stage-icon">1</div>
+                    <span>Parsing input & extracting indicators</span>
+                </div>
+                <div class="scan-stage" id="stage-threat">
+                    <div class="stage-icon">2</div>
+                    <span>Checking threat intelligence feeds</span>
+                </div>
+                <div class="scan-stage" id="stage-domain">
+                    <div class="stage-icon">3</div>
+                    <span>Analyzing domain & URL structure</span>
+                </div>
+                <div class="scan-stage" id="stage-behavioral">
+                    <div class="stage-icon">4</div>
+                    <span>Running behavioral pattern analysis</span>
+                </div>
+                <div class="scan-stage" id="stage-scoring">
+                    <div class="stage-icon">5</div>
+                    <span>Computing weighted risk score</span>
+                </div>
+            </div>
         </div>
 
         <!-- RESULT CARD -->
@@ -1057,12 +1523,63 @@
                 <div class="score-meta">
                     <div class="verdict-badge" id="verdict-badge"></div>
                     <p class="verdict-desc" id="verdict-desc"></p>
+                    <div class="result-meta-row">
+                        <div class="meta-chip" id="confidence-chip">
+                            <span class="chip-dot" id="confidence-dot"></span>
+                            <span id="confidence-text">Confidence: —</span>
+                        </div>
+                        <div class="meta-chip" id="elapsed-chip">
+                            ⏱ <span id="elapsed-text">—</span>
+                        </div>
+                    </div>
                 </div>
             </div>
+
+            <!-- Weight Breakdown -->
+            <div class="weight-breakdown" id="weight-breakdown">
+                <div class="weight-heading">Weighted Score Breakdown</div>
+                <div class="weight-row">
+                    <span class="weight-label">🛰️ Threat Intel (45%)</span>
+                    <div class="weight-bar-track">
+                        <div class="weight-bar-fill fill-threat" id="wb-threat"></div>
+                    </div>
+                    <span class="weight-val" id="wv-threat">0</span>
+                </div>
+                <div class="weight-row">
+                    <span class="weight-label">🌐 Domain (30%)</span>
+                    <div class="weight-bar-track">
+                        <div class="weight-bar-fill fill-domain" id="wb-domain"></div>
+                    </div>
+                    <span class="weight-val" id="wv-domain">0</span>
+                </div>
+                <div class="weight-row">
+                    <span class="weight-label">🧠 Behavioral (25%)</span>
+                    <div class="weight-bar-track">
+                        <div class="weight-bar-fill fill-behav" id="wb-behav"></div>
+                    </div>
+                    <span class="weight-val" id="wv-behav">0</span>
+                </div>
+            </div>
+
             <div class="layers-wrap">
                 <div class="layers-heading">Detection Layer Breakdown</div>
                 <div id="layers-container"></div>
             </div>
+
+            <!-- FEEDBACK -->
+            <div class="feedback-section" id="feedback-section">
+                <div class="feedback-heading">Was this detection accurate?</div>
+                <p class="feedback-question">Help us improve — let us know if this result was correct.</p>
+                <div class="feedback-btns" id="feedback-btns">
+                    <!-- Buttons are dynamically generated based on verdict -->
+                </div>
+                <div class="fb-comment" id="fb-comment">
+                    <textarea id="fb-comment-text" placeholder="Optional: tell us more about why..."></textarea>
+                    <button class="fb-submit" id="fb-submit-btn" onclick="submitFeedback()">Submit Feedback</button>
+                </div>
+                <div class="fb-thanks" id="fb-thanks"></div>
+            </div>
+
             <button class="new-scan-btn" onclick="resetScan()">🔄 New Scan</button>
         </div>
 
@@ -1075,13 +1592,29 @@
 
     <!-- FOOTER -->
     <footer class="app-footer">
-        <div class="privacy-pill">🔒 Zero data stored</div>
-        <p>PhishGuard AI — Privacy-first phishing detection. No data stored, ever.</p>
+        <div class="privacy-pill">🔒 No personal data stored</div>
+        <p>No personal data is stored. Anonymous feedback signals may be used to improve detection accuracy.</p>
+        <div class="version-badge">PhishGuard AI v2.1 • 5-Layer Engine</div>
     </footer>
 
     <script>
-        const API_URL = window.location.origin || 'http://localhost:5000';
+        const API_URL = 'http://127.0.0.1:5000';
         const scanHistory = [];
+        let totalScans = 0;
+
+        // ---- Health Check on Load ----
+        (async function checkBackend() {
+            try {
+                const r = await fetch(API_URL + '/health', { method: 'GET' });
+                if (r.ok) {
+                    const d = await r.json();
+                    const feedsEl = document.getElementById('stat-feeds');
+                    if (d.threat_intel_sources) feedsEl.textContent = d.threat_intel_sources;
+                }
+            } catch (e) {
+                console.warn('Backend not reachable yet.');
+            }
+        })();
 
         // ---- Tab Switching ----
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1151,22 +1684,73 @@
             sendAnalysis({ type: 'image_base64', content: selectedFileBase64 }, document.getElementById('btn-file'));
         }
 
+        // ---- Scan Stage Animation ----
+        let scanStageTimer = null;
+        function startScanStages() {
+            const stages = ['stage-init', 'stage-threat', 'stage-domain', 'stage-behavioral', 'stage-scoring'];
+            const labels = [
+                'Parsing input & extracting indicators',
+                'Querying threat intelligence databases',
+                'Analyzing domain structure & reputation',
+                'Running behavioral pattern analysis',
+                'Computing weighted risk score'
+            ];
+            stages.forEach(s => {
+                const el = document.getElementById(s);
+                el.classList.remove('active', 'done');
+            });
+            let idx = 0;
+            function advance() {
+                if (idx > 0) {
+                    document.getElementById(stages[idx - 1]).classList.remove('active');
+                    document.getElementById(stages[idx - 1]).classList.add('done');
+                    document.getElementById(stages[idx - 1]).querySelector('.stage-icon').textContent = '✓';
+                }
+                if (idx < stages.length) {
+                    document.getElementById(stages[idx]).classList.add('active');
+                    document.getElementById('scan-status-text').innerHTML = labels[idx] + '<span class="scan-dots"></span>';
+                    idx++;
+                    scanStageTimer = setTimeout(advance, 400 + Math.random() * 300);
+                }
+            }
+            advance();
+        }
+        function stopScanStages() {
+            if (scanStageTimer) { clearTimeout(scanStageTimer); scanStageTimer = null; }
+            ['stage-init', 'stage-threat', 'stage-domain', 'stage-behavioral', 'stage-scoring'].forEach(s => {
+                const el = document.getElementById(s);
+                el.classList.remove('active');
+                el.classList.add('done');
+                el.querySelector('.stage-icon').textContent = '✓';
+            });
+        }
+
         async function sendAnalysis(payload, btn) {
+            lastAnalysisPayload = payload;
+            lastAnalysisResult = null;
+            resetFeedback();
             hideError(); hideResult();
             btn.disabled = true; btn.classList.add('loading');
             document.getElementById('scanner').classList.add('active');
+            startScanStages();
             try {
                 const resp = await fetch(API_URL + '/analyze', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
+                stopScanStages();
+                await new Promise(r => setTimeout(r, 400)); // brief pause for final stage
                 if (data.error) { showError(data.error); }
                 else {
+                    lastAnalysisResult = data;
                     showResult(data);
                     addHistory(payload, data);
+                    totalScans++;
+                    document.getElementById('stat-scans').textContent = totalScans;
                 }
             } catch (err) {
+                stopScanStages();
                 showError('Cannot reach PhishGuard backend. Ensure Flask is running on port 5000.');
             } finally {
                 btn.disabled = false; btn.classList.remove('loading');
@@ -1212,7 +1796,44 @@
             badge.textContent = data.emoji + ' ' + rank;
             document.getElementById('verdict-desc').textContent = desc;
 
+            // Confidence chip
+            const confidence = data.confidence || 50;
+            const confDot = document.getElementById('confidence-dot');
+            const confText = document.getElementById('confidence-text');
+            confText.textContent = `Confidence: ${confidence}%`;
+            if (confidence >= 75) { confDot.style.background = 'var(--green)'; }
+            else if (confidence >= 50) { confDot.style.background = 'var(--yellow)'; }
+            else { confDot.style.background = 'var(--red)'; }
+
+            // Elapsed time
+            const elapsed = data.elapsed_ms;
+            if (elapsed) {
+                document.getElementById('elapsed-text').textContent = elapsed >= 1000
+                    ? (elapsed / 1000).toFixed(1) + 's'
+                    : elapsed + 'ms';
+            }
+
+            // Weight breakdown bars
+            const wb = data.weight_breakdown;
+            if (wb) {
+                const maxWeighted = 45; // max possible weighted value (45% of 100)
+                setTimeout(() => {
+                    const threatW = wb.threat_intel ? wb.threat_intel.weighted : 0;
+                    const domainW = wb.domain ? wb.domain.weighted : 0;
+                    const behavW = wb.behavioral ? wb.behavioral.weighted : 0;
+
+                    document.getElementById('wb-threat').style.width = Math.min(threatW / maxWeighted * 100, 100) + '%';
+                    document.getElementById('wb-domain').style.width = Math.min(domainW / 30 * 100, 100) + '%';
+                    document.getElementById('wb-behav').style.width = Math.min(behavW / 25 * 100, 100) + '%';
+
+                    document.getElementById('wv-threat').textContent = threatW.toFixed(1);
+                    document.getElementById('wv-domain').textContent = domainW.toFixed(1);
+                    document.getElementById('wv-behav').textContent = behavW.toFixed(1);
+                }, 200);
+            }
+
             renderLayers(data.layers);
+            buildFeedbackButtons(rank);
             setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 120);
         }
 
@@ -1230,6 +1851,18 @@
         function renderLayers(layers) {
             const c = document.getElementById('layers-container');
             c.innerHTML = '';
+
+            // Layer 0 — Learning Memory
+            const lm = layers.learning_memory;
+            if (lm) {
+                c.appendChild(mkLayer('🧠', 'Learning Memory',
+                    lm.triggered
+                        ? (lm.overridden ? `Verdict overridden: ${esc(lm.detail)}` : esc(lm.detail))
+                        : 'No prior feedback match for this content',
+                    lm.triggered,
+                    lm.triggered ? ['Source: ' + (lm.source || 'User Feedback')] : []
+                ));
+            }
 
             const ti = layers.threat_intel;
             c.appendChild(mkLayer('🛰️', 'Threat Intelligence',
@@ -1311,13 +1944,135 @@
             });
         }
 
+        // ---- Feedback ----
+        var currentFeedbackType = null;
+        var lastAnalysisPayload = null;
+        var lastAnalysisResult = null;
+
+        function buildFeedbackButtons(rank) {
+            const container = document.getElementById('feedback-btns');
+            container.innerHTML = '';
+            container.style.display = 'flex';
+
+            // Always show "Correct" button
+            const correctBtn = document.createElement('button');
+            correctBtn.className = 'fb-btn correct';
+            correctBtn.innerHTML = '✅ Correct';
+            correctBtn.onclick = function () { selectFeedback('correct', this); };
+            container.appendChild(correctBtn);
+
+            // Dynamic correction options based on verdict
+            const options = {
+                'Safe': [{ type: 'actually_suspicious', label: '⚠️ Actually Suspicious', cls: 'wrong-suspicious' },
+                { type: 'actually_scam', label: '🔴 Actually a Scam', cls: 'wrong-scam' }],
+                'Suspicious': [{ type: 'actually_safe', label: '🟢 Actually Safe', cls: 'wrong-safe' },
+                { type: 'actually_scam', label: '🔴 Actually a Scam', cls: 'wrong-scam' }],
+                'Scam': [{ type: 'actually_safe', label: '🟢 Actually Safe', cls: 'wrong-safe' },
+                { type: 'actually_suspicious', label: '⚠️ Actually Suspicious', cls: 'wrong-suspicious' }]
+            };
+
+            (options[rank] || options['Suspicious']).forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'fb-btn ' + opt.cls;
+                btn.innerHTML = opt.label;
+                btn.onclick = function () { selectFeedback(opt.type, this); };
+                container.appendChild(btn);
+            });
+        }
+
+        function selectFeedback(type, btn) {
+            currentFeedbackType = type;
+            document.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            document.getElementById('fb-comment').classList.add('visible');
+        }
+
+        function _getDominantSignalType() {
+            // Determine which layer contributed most to the score
+            if (!lastAnalysisResult || !lastAnalysisResult.weight_breakdown) return 'unknown';
+            const wb = lastAnalysisResult.weight_breakdown;
+            const layers = [
+                { key: 'threat_intel', val: wb.threat_intel ? wb.threat_intel.weighted : 0 },
+                { key: 'domain', val: wb.domain ? wb.domain.weighted : 0 },
+                { key: 'behavioral', val: wb.behavioral ? wb.behavioral.weighted : 0 }
+            ];
+            layers.sort((a, b) => b.val - a.val);
+            return layers[0].val > 0 ? layers[0].key : 'unknown';
+        }
+
+        async function submitFeedback() {
+            if (!currentFeedbackType) return;
+            const submitBtn = document.getElementById('fb-submit-btn');
+            submitBtn.disabled = true;
+            const comment = document.getElementById('fb-comment-text').value.trim();
+
+            // Feedback with content for learning memory
+            const feedbackData = {
+                feedback: currentFeedbackType,
+                original_verdict: lastAnalysisResult ? lastAnalysisResult.rank : '',
+                risk_score: lastAnalysisResult ? lastAnalysisResult.risk_score : '?',
+                signal_type: _getDominantSignalType(),
+                comment: comment,
+                content: lastAnalysisPayload ? lastAnalysisPayload.content : '',
+                content_type: lastAnalysisPayload ? lastAnalysisPayload.type : ''
+            };
+
+            let result = {};
+            try {
+                const resp = await fetch(API_URL + '/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(feedbackData)
+                });
+                result = await resp.json();
+            } catch (e) {
+                // Silently fail — feedback is non-critical
+            }
+
+            document.getElementById('feedback-btns').style.display = 'none';
+            document.getElementById('fb-comment').classList.remove('visible');
+            const thanksEl = document.getElementById('fb-thanks');
+
+            if (result.action === 'weights_adjusted') {
+                if (result.learned_signatures) {
+                    thanksEl.innerHTML = '🧠 <strong>Signatures learned!</strong> Your correction has been analyzed — scam signatures were extracted to catch similar threats in the future.';
+                } else {
+                    thanksEl.innerHTML = '⚙️ <strong>Weights adjusted!</strong> Your correction will improve future scoring accuracy.';
+                }
+            } else if (result.action === 'confidence_validated') {
+                thanksEl.innerHTML = '✅ <strong>Confirmed!</strong> Your validation strengthens detection confidence.';
+            } else {
+                thanksEl.textContent = '✅ Thank you for your feedback!';
+            }
+            thanksEl.classList.add('visible');
+            submitBtn.disabled = false;
+        }
+
+        function resetFeedback() {
+            currentFeedbackType = null;
+            document.getElementById('feedback-btns').innerHTML = '';
+            document.getElementById('feedback-btns').style.display = 'flex';
+            document.getElementById('fb-comment').classList.remove('visible');
+            document.getElementById('fb-comment-text').value = '';
+            document.getElementById('fb-thanks').classList.remove('visible');
+        }
+
         // ---- Utilities ----
         function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
         function showError(msg) { const el = document.getElementById('error-msg'); el.textContent = msg; el.classList.add('visible'); }
         function hideError() { document.getElementById('error-msg').classList.remove('visible'); }
-        function hideResult() { document.getElementById('result-card').classList.remove('visible'); }
+        function hideResult() {
+            document.getElementById('result-card').classList.remove('visible');
+            // Reset weight bars for fresh animation on next result
+            ['wb-threat', 'wb-domain', 'wb-behav'].forEach(id => {
+                document.getElementById(id).style.width = '0%';
+            });
+            ['wv-threat', 'wv-domain', 'wv-behav'].forEach(id => {
+                document.getElementById(id).textContent = '0';
+            });
+        }
         function resetScan() {
-            hideResult(); hideError();
+            hideResult(); hideError(); resetFeedback();
             document.getElementById('url-input').value = '';
             document.getElementById('text-input').value = '';
             removeFile();
@@ -1327,4 +2082,3 @@
 </body>
 
 </html>
-
